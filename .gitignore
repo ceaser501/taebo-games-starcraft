@@ -5,3 +5,10 @@ node_modules
 dist
 .cache
 .DS_Store
+
+# Original game files (separate private repo: ceaser501/taebo-games-starcraft-assets)
+sc-assets/
+casc-list.txt
+
+# Converted from sc-assets by the converter
+starcraft/assets/sc/

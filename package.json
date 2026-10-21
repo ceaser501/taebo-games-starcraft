@@ -1,7 +1,7 @@
 {
-  "name": " ",
+  "name": "taebo-games-starcraft",
   "version": "0.0.1",
-  "description": "",
+  "description": "StarCraft: Brood War 스타일 실시간 전략 게임 (브라우저)",
   "private": true,
   "keywords": [
     ""
@@ -9,9 +9,9 @@
   "license": "",
   "author": "",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "webpack serve --open --config webpack.config.dev.js",
-    "build": "webpack --config webpack.config.prod.js"
+    "build": "webpack --config webpack.config.prod.js",
+    "sc:casc": "node starcraft/tools/casc.mjs"
   },
   "devDependencies": {
     "copy-webpack-plugin": "^11.0.0",
