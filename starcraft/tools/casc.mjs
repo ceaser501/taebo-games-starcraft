@@ -2,10 +2,11 @@
 // writes) so the files we need can be listed and copied out without CascView, which is Windows-only.
 //
 //   node starcraft/tools/casc.mjs list    <StarCraft folder>                   > casc-list.txt
-//   node starcraft/tools/casc.mjs extract <StarCraft folder> <out dir> <prefix>...
+//   node starcraft/tools/casc.mjs extract <StarCraft folder> <out dir> <pattern>...
 //
-// `list` prints every file as "size<TAB>path". `extract` copies the files whose path starts with
-// one of the prefixes (case-insensitive, `/` or `\`), e.g. `arr/` `SD/` `TileSet/`.
+// `list` prints every file as "size<TAB>path". `extract` copies the files matching the patterns
+// (case-insensitive): `arr/` takes a whole folder, `*` stays within one folder (`TileSet/*.cv5`),
+// and a leading `!` leaves matches out (`!unit/wirefram/`).
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -160,9 +161,15 @@ export class Casc {
   read(file) { return this.readCkey(file.ckey); }
 }
 
-function main([cmd, root, out, ...prefixes]) {
-  if (!['list', 'extract'].includes(cmd) || !root || (cmd === 'extract' && (!out || !prefixes.length))) {
-    console.error('usage: casc.mjs list <StarCraft folder>\n       casc.mjs extract <StarCraft folder> <out dir> <prefix>...');
+// A trailing `/` means everything below that folder.
+function patternToRegex(p) {
+  const body = p.replace(/\\/g, '/').replace(/[.+?^${}()|[\]]/g, '\\$&').replace(/\*/g, '[^/]*');
+  return new RegExp(`^${body}${p.endsWith('/') ? '' : '$'}`, 'i');
+}
+
+function main([cmd, root, out, ...patterns]) {
+  if (!['list', 'extract'].includes(cmd) || !root || (cmd === 'extract' && (!out || !patterns.length))) {
+    console.error('usage: casc.mjs list <StarCraft folder>\n       casc.mjs extract <StarCraft folder> <out dir> <pattern>...');
     process.exit(1);
   }
   const casc = new Casc(path.resolve(root));
@@ -174,10 +181,11 @@ function main([cmd, root, out, ...prefixes]) {
     console.error(`${casc.files.length} files, ${(total / 1e6).toFixed(0)} MB`);
     return;
   }
-  const wanted = prefixes.map((p) => p.replace(/\\/g, '/').toLowerCase());
+  const wanted = patterns.filter((p) => !p.startsWith('!')).map(patternToRegex);
+  const skipped = patterns.filter((p) => p.startsWith('!')).map((p) => patternToRegex(p.slice(1)));
   let count = 0, bytes = 0;
   for (const f of casc.files) {
-    if (!wanted.some((p) => f.name.toLowerCase().startsWith(p)) || !f.local) continue;
+    if (!f.local || !wanted.some((r) => r.test(f.name)) || skipped.some((r) => r.test(f.name))) continue;
     const dst = path.join(out, f.name);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     const data = casc.read(f);
