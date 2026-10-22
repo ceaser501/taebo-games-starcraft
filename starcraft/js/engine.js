@@ -4,32 +4,62 @@ const TILESETS = ['badlands', 'platform', 'install', 'ashworld', 'jungle', 'dese
 const DATA = new URL('assets/sc/', document.baseURI).href;
 const ENGINE = new URL('js/engine/', document.baseURI).href;
 
-async function fetchGzip(url, onProgress) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+// Fetches a file whole, with progress. Errors name the file (Safari only says "Load failed").
+async function fetchBytes(url, onProgress) {
+  const name = decodeURIComponent(url.slice(DATA.length) || url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`${name} 받기 실패 (${err.message})`);
+  }
+  if (!res.ok) throw new Error(`${name} 없음 (${res.status}). npm run sc:pack 을 했는지 확인해 주세요.`);
   const total = Number(res.headers.get('content-length')) || 0;
+  const chunks = [];
   let loaded = 0;
-  const counted = res.body.pipeThrough(new TransformStream({
-    transform(chunk, ctl) { loaded += chunk.length; onProgress?.(loaded, total); ctl.enqueue(chunk); },
-  }));
-  return new Uint8Array(await new Response(counted.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+  try {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      onProgress?.(loaded, total);
+    }
+  } catch (err) {
+    throw new Error(`${name} 받다가 끊김 (${err.message})`);
+  }
+  const bytes = new Uint8Array(loaded);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.length; }
+  return bytes;
 }
 
-const fetchText = async (url) => {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  return res.text();
-};
+// The data packs are gzip files. Some servers already unzip them on the way (Content-Encoding),
+// so only unzip what still starts with the gzip signature.
+async function fetchGzip(url, onProgress) {
+  const bytes = await fetchBytes(url, onProgress);
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes;
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+const fetchText = async (url) => new TextDecoder().decode(await fetchBytes(url));
 
 export class Engine {
   static async load(onProgress) {
-    const { default: create } = await import(/* webpackIgnore: true */ `${ENGINE}bw.mjs`);
-    const M = await create({ locateFile: (f) => ENGINE + f });
+    let M;
+    try {
+      const { default: create } = await import(/* webpackIgnore: true */ `${ENGINE}bw.mjs`);
+      M = await create({ locateFile: (f) => ENGINE + f });
+    } catch (err) {
+      throw new Error(`엔진(bw.mjs/bw.wasm) 불러오기 실패 (${err.message})`);
+    }
     const engine = new Engine(M);
     const [bin, idx] = await Promise.all([fetchGzip(`${DATA}data/core.bin.gz`, onProgress), fetchText(`${DATA}data/core.idx`)]);
     engine.addData(bin, idx);
     if (!M._bw_init()) throw new Error('engine init failed');
-    engine.maps = await (await fetch(`${DATA}maps.json`)).json();
+    engine.maps = JSON.parse(await fetchText(`${DATA}maps.json`));
     return engine;
   }
 
@@ -67,9 +97,7 @@ export class Engine {
   // races: one per player (0 zerg, 1 terran, 2 protoss). Returns the slot of each player.
   async start(mapFile, seed, races, onProgress) {
     const path = '/map.chk.mpq';
-    const res = await fetch(`${DATA}maps/${mapFile}`);
-    if (!res.ok) throw new Error(`map ${mapFile}: ${res.status}`);
-    this.M.FS.writeFile(path, new Uint8Array(await res.arrayBuffer()));
+    this.M.FS.writeFile(path, await fetchBytes(`${DATA}maps/${mapFile}`));
     const p = this.cstr(path);
     const tileset = this.M._bw_map_tileset(p);
     if (tileset < 0) throw new Error(`맵을 읽지 못했어요: ${this.text(this.M._bw_text())}`);
