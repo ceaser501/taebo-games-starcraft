@@ -30,6 +30,7 @@
       <button type="button" id="menu-button">메뉴 (F10)</button>
       <span id="clock">0:00</span>
       <span id="waiting" hidden>상대를 기다리는 중…</span>
+      <span id="net-banner" hidden></span>
     </div>
     <div id="notices"></div>
     <div id="console">
@@ -65,6 +66,17 @@
     <button id="solo" type="button" disabled>불러오는 중…</button>
     <p class="sub">혼자 테스트: 상대 기지는 가만히 있어요.</p>
     <p id="notice"></p>
+    <section id="online">
+      <h2>친구와 온라인 대전</h2>
+      <p class="sub">방장이 고른 맵에서 1:1. 로그인 없이 방 코드로 들어와요.</p>
+      <label>내 이름 <input id="player-name" type="text" maxlength="10" placeholder="필수" autocomplete="nickname"></label>
+      <div class="online-row">
+        <button id="host" type="button" disabled>방 만들기</button>
+        <input id="code" type="text" maxlength="5" placeholder="방 코드" autocomplete="off" spellcheck="false">
+        <button id="join" type="button" disabled>참가</button>
+      </div>
+      <p id="net-status"></p>
+    </section>
     <dl class="keys">
       <dt>왼쪽 클릭·드래그</dt><dd>선택 (Shift 추가, 더블클릭·Ctrl 같은 유닛 전부)</dd>
       <dt>오른쪽 클릭</dt><dd>이동·공격·채취 (Shift 예약)</dd>
@@ -72,6 +84,17 @@
       <dt>Ctrl+숫자 / 숫자</dt><dd>부대 지정 / 부르기 (두 번 누르면 이동)</dd>
       <dt>M S A P H G C B</dt><dd>명령 단축키, Esc 취소</dd>
     </dl>
+  </div>
+
+  <div id="lobby" class="panel" hidden>
+    <h2>대기실</h2>
+    <p class="code-line">방 코드 <b id="lobby-code"></b> <button type="button" id="copy-code">복사</button></p>
+    <ul id="lobby-players"></ul>
+    <label id="lobby-map-label">맵 <select id="lobby-map"></select></label>
+    <p id="lobby-map-name" class="sub"></p>
+    <button type="button" id="lobby-start" disabled>게임 시작</button>
+    <button type="button" id="lobby-leave">나가기</button>
+    <p id="lobby-status"></p>
   </div>
 
   <div id="loading" class="panel" hidden>
