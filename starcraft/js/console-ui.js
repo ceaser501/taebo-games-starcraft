@@ -10,6 +10,8 @@ export const MINIMAP = { x: 6, y: 348, w: 128, h: 128 };
 const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
 // Per race: the console art column where the status panel is widened, and how many columns repeat.
 const WIDEN = { terran: [274, 1], protoss: [238, 1], zerg: [308, 24] };
+// Per race: the window above the portrait where the clock shows (console art x, y, w, h).
+const CLOCK = { terran: [414, 95, 64, 17], protoss: [416, 90, 66, 17], zerg: [414, 100, 64, 15] };
 const STATUS = { x: 154, y: 387, w: 250, h: 90 };
 export const PORTRAIT = { x: 413, y: 410, w: 60, h: 56 };
 // Text colours as the fonts were baked (tfontgam.pcx order).
@@ -172,15 +174,6 @@ export class ConsoleUI {
     const extra = this.extra, h = img.height;
     const [col, slice] = WIDEN[this.race];
     this.drawResources(ctx, s);
-    // The game clock sits on top of the portrait's frame, as in Remastered (drawn first, so the
-    // console covers its foot).
-    if (s.clock) {
-      const t = art.time;
-      const cx = PORTRAIT.x + PORTRAIT.w / 2 + extra;
-      const y = CONSOLE_Y + (this.race === 'protoss' ? 77 : 85) - t.h;
-      ctx.drawImage(this.images[t.file], Math.round(cx - t.w / 2), y);
-      this.text(ctx, s.clock, cx, y + (t.h > 32 ? 28 : 9), COLOR.white, 'font10', 'center');
-    }
     ctx.drawImage(img, 0, 0, col, h, 0, CONSOLE_Y, col, h);
     for (let i = 0; i < extra; i += slice) {
       const w = Math.min(slice, extra - i);
@@ -189,13 +182,16 @@ export class ConsoleUI {
     ctx.drawImage(img, col, 0, img.width - col, h, col + extra, CONSOLE_Y, img.width - col, h);
     this.drawMinimap(ctx, s);
     this.drawMessages(ctx, s);
-    // The status panel's contents in the middle of its widened window.
-    ctx.save();
-    ctx.translate(extra >> 1, 0);
-    this.drawStatus(ctx, s);
-    ctx.restore();
+    this.drawStatus(ctx, s); // left-aligned in its widened window
     ctx.save();
     ctx.translate(extra, 0);
+    // The game clock in the small window right above the portrait.
+    if (s.clock) {
+      const [x, y, w, h] = CLOCK[this.race];
+      ctx.fillStyle = '#000';
+      ctx.fillRect(x, CONSOLE_Y + y, w, h);
+      this.text(ctx, s.clock, x + w / 2, CONSOLE_Y + y + Math.floor((h - 10) / 2), COLOR.white, 'font10', 'center');
+    }
     this.drawPortrait(ctx, s.portrait);
     this.drawCard(ctx, s);
     ctx.restore();
@@ -315,7 +311,6 @@ export class ConsoleUI {
   }
 
   passengerAt(x, y) {
-    x -= this.extra >> 1;
     return this.passengerRects?.find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)?.uid ?? null;
   }
 
