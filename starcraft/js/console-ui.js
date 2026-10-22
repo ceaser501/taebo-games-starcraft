@@ -355,6 +355,58 @@ export class ConsoleUI {
     }
   }
 
+  // ---- dialogs (game menu, victory / defeat), from the console's dialog pieces ----
+  // dlg.dds.grp: 35-43 the box (corners, edges, middle), 47-49 a button (left, middle, right),
+  // 53-55 a disabled button, 56-58 a lit one.
+
+  dialogLayout(d) {
+    const bw = d.width || 200, bh = 22;
+    const h = 46 + d.buttons.length * (bh + 6) + (d.text ? 20 : 0);
+    const w = bw + 40;
+    const x = Math.round((SCREEN.w - w) / 2), y = Math.round((CONSOLE_Y - h) / 2) + 20;
+    const buttons = d.buttons.map((b, i) => ({ ...b, x: x + 20, y: y + 40 + (d.text ? 20 : 0) + i * (bh + 6), w: bw, h: bh }));
+    return { x, y, w, h, buttons };
+  }
+
+  dialogButtonAt(d, px, py) {
+    return this.dialogLayout(d).buttons.findIndex((b) => px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h);
+  }
+
+  drawDialog(ctx, d, hover) {
+    const sheet = `dlg-${this.race}`;
+    const L = this.dialogLayout(d);
+    const piece = (i) => this.meta.sheets[sheet].frames[i];
+    // The box: corners, then edges and middle tiled.
+    const [tl, t, tr, l, c, r, bl, b, br] = [35, 36, 37, 38, 39, 40, 41, 42, 43].map(piece);
+    const img = this.images[this.meta.sheets[sheet].file];
+    const tile = (f, x, y, w, h) => {
+      for (let yy = 0; yy < h; yy += f[3]) for (let xx = 0; xx < w; xx += f[2]) {
+        const cw = Math.min(f[2], w - xx), ch = Math.min(f[3], h - yy);
+        ctx.drawImage(img, f[0], f[1], cw, ch, x + xx, y + yy, cw, ch);
+      }
+    };
+    const { x, y, w, h } = L;
+    tile(c, x + tl[2], y + t[3], w - tl[2] - tr[2], h - t[3] - b[3]);
+    tile(t, x + tl[2], y, w - tl[2] - tr[2], t[3]);
+    tile(b, x + bl[2], y + h - b[3], w - bl[2] - br[2], b[3]);
+    tile(l, x, y + tl[3], l[2], h - tl[3] - bl[3]);
+    tile(r, x + w - r[2], y + tr[3], r[2], h - tr[3] - br[3]);
+    ctx.drawImage(img, tl[0], tl[1], tl[2], tl[3], x, y, tl[2], tl[3]);
+    ctx.drawImage(img, tr[0], tr[1], tr[2], tr[3], x + w - tr[2], y, tr[2], tr[3]);
+    ctx.drawImage(img, bl[0], bl[1], bl[2], bl[3], x, y + h - bl[3], bl[2], bl[3]);
+    ctx.drawImage(img, br[0], br[1], br[2], br[3], x + w - br[2], y + h - br[3], br[2], br[3]);
+    this.text(ctx, d.title, x + w / 2, y + 12, COLOR.white, d.big ? 'font16' : 'font14', 'center');
+    if (d.text) this.text(ctx, d.text, x + w / 2, y + 36, COLOR.blue, 'font10', 'center');
+    L.buttons.forEach((bt, i) => {
+      const set = bt.disabled ? [53, 54, 55] : i === hover ? [56, 57, 58] : [47, 48, 49];
+      const [bl2, bm, br2] = set.map(piece);
+      tile(bm, bt.x + bl2[2], bt.y, bt.w - bl2[2] - br2[2], bm[3]);
+      ctx.drawImage(img, bl2[0], bl2[1], bl2[2], bl2[3], bt.x, bt.y, bl2[2], bl2[3]);
+      ctx.drawImage(img, br2[0], br2[1], br2[2], br2[3], bt.x + bt.w - br2[2], bt.y, br2[2], br2[3]);
+      this.text(ctx, bt.label, bt.x + bt.w / 2, bt.y + 4, bt.disabled ? COLOR.grey : i === hover ? COLOR.white : COLOR.yellow, 'font10', 'center');
+    });
+  }
+
   // A cursor image as a CSS cursor (data URL scaled to the screen), so it moves without lag.
   cursorCss(name, frameIndex, scale) {
     const key = `${name}:${frameIndex}:${scale}`;

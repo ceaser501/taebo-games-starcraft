@@ -110,8 +110,8 @@ const writeDds = (rel, name) => {
   fs.writeFileSync(path.join(uiDir, `${name}.png`), encodePng(d.width, d.height, d.rgba));
   return { file: `${name}.png`, w: d.width, h: d.height };
 };
-const writeSheet = (rel, name, columns = 16) => {
-  const s = sheet(readDdsGrp(fs.readFileSync(sd(rel))), columns);
+const writeSheet = (rel, name, columns = 16, trim = false) => {
+  const s = sheet(readDdsGrp(fs.readFileSync(sd(rel))), columns, trim);
   fs.writeFileSync(path.join(uiDir, `${name}.png`), s.png);
   ui.sheets[name] = { file: `${name}.png`, cell: s.cell, frames: s.frames };
 };
@@ -123,6 +123,7 @@ for (const race of ['terran', 'protoss', 'zerg']) {
     time: writeDds(`${dir}/console_TIME.DDS`, `time-${race}`),
   };
   writeSheet(`${dir}/cmdbtns.dds.grp`, `cmdbtns-${race}`, 10);
+  writeSheet(`${dir}/dlg.dds.grp`, `dlg-${race}`, 16, true);
 }
 ui.console.progress = { empty: writeDds('game/tpbrempt.DDS', 'pbrempt'), full: writeDds('game/consoles/terran/pbrfull.DDS', 'pbrfull') };
 writeSheet('game/icons.dds.grp', 'icons', 12);

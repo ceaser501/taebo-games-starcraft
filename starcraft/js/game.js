@@ -13,15 +13,16 @@ const PORTRAITS = new URL('assets/sc/portrait/', document.baseURI).href;
 
 // Solo play: whatever the player commands runs on the next frame.
 export class SoloLockstep {
-  constructor(slot) { this.slot = slot; this.queue = []; }
+  constructor(slot) { this.slot = slot; this.queue = []; this.paused = false; }
   submit(bytes) { this.queue.push(bytes); }
-  ready() { return true; }
+  ready() { return !this.paused; }
   take() { const q = this.queue.map((bytes) => ({ slot: this.slot, bytes })); this.queue = []; return q; }
 }
 
 export class Game {
-  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, cheats = false, names = [], onEnd, onChat }) {
-    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, cheats, names, onEnd, onChat });
+  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, cheats = false, names = [], online = false, onEnd, onChat }) {
+    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, cheats, names, online, onEnd, onChat });
+    this.dialog = null; // the game menu or the end-of-game box, drawn on the screen
     this.screens = {}; // F2-F4 saved views
     this.chat = null; // the line being typed, while chatting
     this.canvas = document.getElementById('view');
@@ -89,6 +90,45 @@ export class Game {
   }
 
   // ---- portrait: idle fidgets, talking when the unit answers ----
+
+  // ---- the game menu (F10) and the end-of-game box ----
+
+  openMenu() {
+    const paused = this.lockstep.paused;
+    const buttons = [];
+    if (!this.online) buttons.push({ label: paused ? 'Resume Game' : 'Pause Game', run: () => { this.lockstep.paused = !paused; this.openMenu(); } });
+    buttons.push({ label: document.fullscreenElement ? 'Window Mode' : 'Full Screen', run: () => {
+      if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {});
+      this.closeDialog();
+    } });
+    buttons.push({ label: 'End Mission', run: () => this.openEndMenu() });
+    buttons.push({ label: 'Return to Game', run: () => this.closeDialog() });
+    this.dialog = { title: 'Game Menu', buttons };
+  }
+
+  openEndMenu() {
+    this.dialog = { title: 'End Mission', buttons: [
+      { label: this.online ? 'Surrender' : 'Quit Mission', run: () => { this.closeDialog(); this.onEnd?.('quit'); } },
+      { label: 'Previous', run: () => this.openMenu() },
+    ] };
+  }
+
+  closeDialog() {
+    if (this.dialog?.ending) return;
+    this.dialog = null;
+    if (!this.online) this.lockstep.paused = false;
+  }
+
+  // Victory or defeat: the original's sound and a box to continue.
+  showResult(kind) {
+    this.sound.play(kind === 'defeat' ? 'misc/youlose.wav' : 'misc/youwin.wav');
+    this.dialog = {
+      ending: true, big: true,
+      title: kind === 'defeat' ? 'Defeat' : 'Victory!',
+      text: kind === 'left' ? 'Your opponent has left the game.' : '',
+      buttons: [{ label: 'Continue', run: () => this.onEnd?.('continue') }],
+    };
+  }
 
   // ---- chat (Enter), and in solo tests the original cheat phrases ----
 
@@ -349,7 +389,7 @@ export class Game {
       chat: this.chat,
       messages: [
         ...this.messages,
-        ...(this.waiting ? [{ text: 'Waiting for opponent...', color: COLOR.yellow }] : []),
+        ...(this.lockstep.paused ? [{ text: 'Game Paused', color: COLOR.yellow }] : this.waiting ? [{ text: 'Waiting for opponent...', color: COLOR.yellow }] : []),
         ...(this.banner ? [{ text: this.banner, color: COLOR.yellow }] : []),
       ],
       clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
@@ -362,6 +402,7 @@ export class Game {
         else c.drawImage(icon, x, y);
       },
     });
+    if (this.dialog) this.ui.drawDialog(ctx, this.dialog, this.dialogHover);
     this.updateCursor(now);
   }
 
@@ -504,6 +545,7 @@ export class Game {
     this.on(window, 'pointermove', (e) => {
       const p = this.toScreen(e);
       this.pointer = p;
+      if (this.dialog) { this.dialogHover = this.ui.dialogButtonAt(this.dialog, p.x, p.y); this.hoverPos = -1; return; }
       this.hoverPos = this.ui.cardAt(p.x, p.y);
       if (this.hoverPos >= 0 && !this.buttons.some((b) => b.pos === this.hoverPos)) this.hoverPos = -1;
       if (this.miniDrag) { const w = this.minimapWorld(p); this.center(w.x, w.y); }
@@ -519,6 +561,12 @@ export class Game {
       this.sound.unlock();
       const p = this.toScreen(e);
       this.pointer = p;
+      if (this.dialog) {
+        const i = this.ui.dialogButtonAt(this.dialog, p.x, p.y);
+        const b = this.dialog.buttons[i];
+        if (b && !b.disabled && e.button === 0) { this.sound.play('misc/button.wav'); b.run(); }
+        return;
+      }
       if (this.inMinimap(p)) {
         const w = this.minimapWorld(p);
         if (e.altKey && e.button === 0) { this.send(Uint8Array.of(88, w.x & 255, w.x >> 8, w.y & 255, w.y >> 8)); return; }
@@ -574,6 +622,11 @@ export class Game {
       return;
     }
     if (!down) return;
+    if (e.code === 'F10') { e.preventDefault(); if (this.dialog) this.closeDialog(); else this.openMenu(); return; }
+    if (this.dialog) {
+      if (e.code === 'Escape') this.closeDialog();
+      return;
+    }
     // Solo testing: F9 gives 10000 minerals and gas and turns on fast building (the original's
     // "show me the money" and "operation cwal"). F9 has no other use in the original.
     if (e.code === 'F9' && this.cheats) {
@@ -597,7 +650,7 @@ export class Game {
       const b = this.buttons.find((x) => x.key === 'Esc');
       if (b) { this.press(b); return; }
       if (this.menu) { this.menu = null; this.updateState(); return; }
-      this.onEnd?.('menu');
+      this.openMenu();
       return;
     }
     const digit = e.code.match(/^Digit(\d)$/)?.[1];
@@ -638,6 +691,6 @@ export class Game {
 
   finish(won) {
     this.ended = true;
-    this.onEnd?.(won ? 'victory' : 'defeat');
+    this.showResult(won ? 'victory' : 'defeat');
   }
 }

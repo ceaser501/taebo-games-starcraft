@@ -86,7 +86,9 @@ export function readDdsGrp(buf) {
 }
 
 // Lays frames into a grid sheet. Returns { png, frames: [[x, y, w, h], ...], cell: [w, h] }.
-export function sheet(frames, columns = 16) {
+// With `trim`, each frame's size leaves out fully transparent rows and columns at its right and
+// bottom (DDS images are padded to multiples of 4), so tiled pieces join without gaps.
+export function sheet(frames, columns = 16, trim = false) {
   const cw = Math.max(...frames.map((f) => f.width)), ch = Math.max(...frames.map((f) => f.height));
   const cols = Math.min(columns, frames.length), rows = Math.ceil(frames.length / cols);
   const W = cols * cw, H = rows * ch;
@@ -94,7 +96,10 @@ export function sheet(frames, columns = 16) {
   const rects = frames.map((f, i) => {
     const x0 = (i % cols) * cw, y0 = Math.floor(i / cols) * ch;
     for (let y = 0; y < f.height; y++) rgba.set(f.rgba.subarray(y * f.width * 4, (y + 1) * f.width * 4), ((y0 + y) * W + x0) * 4);
-    return [x0, y0, f.width, f.height];
+    if (!trim) return [x0, y0, f.width, f.height];
+    let w = 0, h = 0;
+    for (let y = 0; y < f.height; y++) for (let x = 0; x < f.width; x++) if (f.rgba[(y * f.width + x) * 4 + 3]) { w = Math.max(w, x + 1); h = Math.max(h, y + 1); }
+    return [x0, y0, w, h];
   });
   return { png: encodePng(W, H, rgba), frames: rects, cell: [cw, ch] };
 }

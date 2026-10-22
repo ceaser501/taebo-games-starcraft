@@ -9,7 +9,7 @@ import { Net, netErrorText } from './net.js';
 const $ = (id) => document.getElementById(id);
 const TERRAN = 1;
 const DEFAULT_MAP = /heartbreak ridge/i; // a standard 1:1 map with gas
-const PANELS = ['menu', 'loading', 'pause', 'result', 'gate', 'lobby'];
+const PANELS = ['menu', 'loading', 'gate', 'lobby'];
 
 let engine = null;
 let ui = null;
@@ -77,7 +77,7 @@ async function launch({ file, seed, players, me, cheats = false, names = [], onC
   // Names by game slot, for chat lines.
   const slotNames = [];
   slots.forEach((slot, i) => { slotNames[slot] = names[i]; });
-  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, cheats, names: slotNames, onChat, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
+  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, cheats, names: slotNames, onChat, online: !!online, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
   game.start();
   if (params.has('debug')) window.sc = { engine, game, online };
 }
@@ -96,25 +96,23 @@ async function startSolo() {
   }
 }
 
+// From the game: 'quit' (Quit Mission / Surrender), 'continue' (after victory or defeat).
 function onGameEvent(kind) {
-  if (kind === 'menu') { togglePause(); return; }
-  $('result-title').textContent = kind === 'victory' ? '승리!' : kind === 'left' ? '상대가 나갔어요. 승리!' : '패배';
-  $('result').hidden = false;
-  $('result-ok').textContent = online ? '대기실로' : '메뉴로';
+  if (kind === 'quit') quit();
+  else if (kind === 'continue') resultOk();
 }
 
-function togglePause() {
-  if (!game) return;
-  $('pause').hidden = !$('pause').hidden;
-  $('quit').textContent = online ? '항복하고 나가기' : '나가기';
+// The opponent left: the remaining player wins.
+function opponentLeft() {
+  if (!game || game.ended) return;
+  game.ended = true;
+  game.showResult('left');
 }
 
 function endGame() {
   game?.stop();
   game = null;
   if (online) online.lockstep = null;
-  $('pause').hidden = true;
-  $('result').hidden = true;
   $('view').getContext('2d').clearRect(0, 0, 1e5, 1e5);
 }
 
@@ -265,7 +263,7 @@ function onGuestMessage(m) {
 function gameMessage(m) {
   if (m.t === 'turn' || m.t === 'need') online.lockstep?.receive(m);
   else if (m.t === 'chat' && game) game.showChat(game.slots[online.role === 'host' ? 1 : 0], String(m.text).slice(0, 80));
-  else if (m.t === 'leave' && game && !game.ended) { game.ended = true; onGameEvent('left'); }
+  else if (m.t === 'leave') opponentLeft();
 }
 
 function startHostMatch() {
@@ -302,11 +300,11 @@ function friendLeft() {
   if (online.role === 'host') {
     online.guestName = null;
     online.net.dropGuest();
-    if (game && !game.ended) { game.ended = true; onGameEvent('left'); }
+    opponentLeft();
     lobbyStatus('친구가 나갔어요. 같은 코드로 다시 들어올 수 있어요.');
     renderLobby();
   } else {
-    if (game && !game.ended) { game.ended = true; onGameEvent('left'); }
+    opponentLeft();
     leaveOnline();
     netStatus('방장이 방을 닫았어요.');
   }
@@ -337,18 +335,6 @@ $('lobby-start').onclick = startHostMatch;
 $('lobby-leave').onclick = leaveOnline;
 $('lobby-map').onchange = () => { online.map = $('lobby-map').value; online.net.send(lobbyInfo()); };
 $('copy-code').onclick = () => navigator.clipboard?.writeText(online?.code || '').then(() => lobbyStatus('복사했어요.'), () => {});
-$('resume').onclick = togglePause;
-$('quit').onclick = quit;
-$('result-ok').onclick = resultOk;
-$('fullscreen').onclick = () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen?.().catch(() => {});
-  $('pause').hidden = true;
-};
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'F10' && game) { e.preventDefault(); togglePause(); }
-});
-
 if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
