@@ -13,6 +13,8 @@ export const PORTRAIT = { x: 413, y: 410, w: 60, h: 56 };
 // Text colours as the fonts were baked (tfontgam.pcx order).
 export const COLOR = { blue: 0, yellow: 1, white: 2, grey: 3, red: 4, green: 5 };
 const HP_COLORS = ['#18fc10', '#fcfc38', '#fc1010'];
+// Close matches of the font colours, for letters the bitmap fonts lack.
+const FALLBACK_COLORS = ['#b4b4f8', '#fcfc38', '#fcfcfc', '#a0a0a0', '#fc4848', '#18fc10'];
 
 const loadImage = (file) => new Promise((resolve, reject) => {
   const img = new Image();
@@ -98,7 +100,7 @@ export class ConsoleUI {
       const c = ch.charCodeAt(0);
       if (c === 10) { max = Math.max(max, w); w = 0; continue; }
       if (c < 32) continue;
-      w += f.glyphs[c]?.[1] ?? 3;
+      w += f.glyphs[c]?.[1] ?? (c > 255 ? f.height - 2 : 3);
     }
     return Math.max(max, w);
   }
@@ -117,7 +119,17 @@ export class ConsoleUI {
         const c = ch.charCodeAt(0);
         if (c < 32) { color = c === 1 ? base : CODES[c] ?? color; continue; }
         const g = f.glyphs[c];
-        if (!g) { lx += 3; continue; }
+        if (!g) {
+          // The bitmap fonts only cover Latin-1; other letters (Korean chat) use a system font.
+          if (c > 255) {
+            ctx.font = `${f.height - 2}px "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+            ctx.fillStyle = FALLBACK_COLORS[color];
+            ctx.textBaseline = 'top';
+            ctx.fillText(ch, lx, y + i * (f.height - 1));
+            lx += Math.ceil(ctx.measureText(ch).width);
+          } else lx += 3;
+          continue;
+        }
         ctx.drawImage(img, g[0], color * f.height, g[1], f.height, lx, y + i * (f.height - 1), g[1], f.height);
         lx += g[1];
       }
@@ -335,7 +347,12 @@ export class ConsoleUI {
 
   drawMessages(ctx, s) {
     const lines = s.messages;
-    lines.forEach((m, i) => this.text(ctx, m.text, 10, CONSOLE_Y - 14 * (lines.length - i) + 4, m.color ?? COLOR.white));
+    const bottom = CONSOLE_Y - (s.chat ? 18 : 0);
+    lines.forEach((m, i) => this.text(ctx, m.text, 10, bottom - 14 * (lines.length - i) + 4, m.color ?? COLOR.white));
+    if (s.chat) {
+      const cursor = Math.floor(s.now / 400) % 2 ? '_' : '';
+      this.text(ctx, `\x04Message to all: \x02${s.chat.text}${cursor}`, 10, CONSOLE_Y - 14, COLOR.white);
+    }
   }
 
   // A cursor image as a CSS cursor (data URL scaled to the screen), so it moves without lag.

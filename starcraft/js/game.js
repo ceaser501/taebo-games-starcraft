@@ -20,8 +20,10 @@ export class SoloLockstep {
 }
 
 export class Game {
-  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, cheats = false, onEnd }) {
-    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, cheats, onEnd });
+  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, cheats = false, names = [], onEnd, onChat }) {
+    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, cheats, names, onEnd, onChat });
+    this.screens = {}; // F2-F4 saved views
+    this.chat = null; // the line being typed, while chatting
     this.canvas = document.getElementById('view');
     this.canvas.width = SCREEN.w;
     this.canvas.height = SCREEN.h;
@@ -87,6 +89,50 @@ export class Game {
   }
 
   // ---- portrait: idle fidgets, talking when the unit answers ----
+
+  // ---- chat (Enter), and in solo tests the original cheat phrases ----
+
+  openChat() {
+    this.chat = { text: '' };
+    const input = document.getElementById('chat-input');
+    input.value = '';
+    input.focus();
+    input.oninput = () => { this.chat && (this.chat.text = input.value.slice(0, 80)); };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); this.sendChat(input.value.trim()); this.closeChat(); }
+      else if (e.key === 'Escape') { e.preventDefault(); this.closeChat(); }
+      e.stopPropagation();
+    };
+  }
+
+  closeChat() {
+    this.chat = null;
+    const input = document.getElementById('chat-input');
+    input.onkeydown = null;
+    input.blur();
+  }
+
+  sendChat(text) {
+    if (!text) return;
+    if (this.cheats) {
+      const flag = { 'show me the money': 0x10, 'operation cwal': 0x2 }[text.toLowerCase()];
+      if (flag) {
+        this.engine.M._bw_enable_cheats(1);
+        this.send(Uint8Array.of(18, flag, 0, 0, 0));
+        this.notice('Cheat enabled.');
+        return;
+      }
+    }
+    this.showChat(this.me, text);
+    this.onChat?.(text);
+  }
+
+  // A chat line, "Name: text", the name in white as in the original.
+  showChat(slot, text) {
+    const name = this.names[slot] || `Player ${slot + 1}`;
+    this.messages.push({ text: `\x04${name}: \x02${text}`, t: performance.now() });
+    this.messages = this.messages.slice(-6);
+  }
 
   playClip(file) {
     if (!file) return;
@@ -174,6 +220,8 @@ export class Game {
       this.engine.action(slot, bytes);
       // A recalled control group is chosen by the game; show what it picked.
       if (slot === this.me && bytes[0] === 19 && bytes[1] === 1) this.engine.syncSelection();
+      // Minimap pings blink for both players.
+      if (bytes[0] === 88) this.pings.push({ x: bytes[1] | bytes[2] << 8, y: bytes[3] | bytes[4] << 8, t: performance.now(), color: '#fcfcfc' });
     }
     this.engine.step();
     this.lockstep.afterStep?.(this.engine);
@@ -282,7 +330,7 @@ export class Game {
 
     this.engine.renderMinimap(this.miniImage);
     this.mapCtx.putImageData(this.miniImage, 0, 0);
-    this.messages = this.messages.filter((m) => now - m.t < 6000);
+    this.messages = this.messages.filter((m) => now - m.t < 8000);
     const secs = Math.floor(this.engine.frame * FRAME_MS / 1000);
     this.ui.draw(ctx, {
       me: this.me,
@@ -298,6 +346,7 @@ export class Game {
       now,
       minimapSize: { w: this.map.width, h: this.map.height },
       viewRect: { x: this.view.x, y: this.view.y, w: SCREEN.w, h: SCREEN.h },
+      chat: this.chat,
       messages: [
         ...this.messages,
         ...(this.waiting ? [{ text: 'Waiting for opponent...', color: COLOR.yellow }] : []),
@@ -401,6 +450,7 @@ export class Game {
       if (why) { this.notice(why); return; }
       this.send(this.engine.cmd.build(m.type, tx, ty));
       this.menu = null;
+      this.sound.play('misc/tbldgplc.wav');
       this.acknowledge();
     }
   }
@@ -471,6 +521,7 @@ export class Game {
       this.pointer = p;
       if (this.inMinimap(p)) {
         const w = this.minimapWorld(p);
+        if (e.altKey && e.button === 0) { this.send(Uint8Array.of(88, w.x & 255, w.x >> 8, w.y & 255, w.y >> 8)); return; }
         if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
         if (this.mode) { this.issueAt(w, e.shiftKey); return; }
         view.setPointerCapture(e.pointerId);
@@ -530,6 +581,15 @@ export class Game {
       this.engine.M._bw_enable_cheats(1);
       this.send(Uint8Array.of(18, 0x12, 0, 0, 0));
       this.notice('Cheat enabled.');
+      return;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); this.openChat(); return; }
+    // F2-F4 jump to a saved screen; with Shift they save the current one.
+    const fkey = { F2: 2, F3: 3, F4: 4 }[e.code];
+    if (fkey) {
+      e.preventDefault();
+      if (e.shiftKey) this.screens[fkey] = { ...this.view };
+      else if (this.screens[fkey]) Object.assign(this.view, this.screens[fkey]);
       return;
     }
     if (e.code === 'Escape') {

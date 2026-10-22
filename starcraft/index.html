@@ -19,6 +19,8 @@
 
 <body>
   <canvas id="view"></canvas>
+  <!-- Receives typed chat (including Korean input methods); the game draws the line itself. -->
+  <input id="chat-input" type="text" maxlength="80" autocomplete="off" aria-label="채팅">
 
   <div id="pause" class="panel" hidden>
     <h2>메뉴</h2>
@@ -63,6 +65,9 @@
       <dt>방향키, 미니맵</dt><dd>화면 이동 (전체화면에서는 화면 끝으로도)</dd>
       <dt>Ctrl+숫자 / 숫자</dt><dd>부대 지정 / 부르기 (두 번 누르면 이동)</dd>
       <dt>M S A P H G C B</dt><dd>명령 단축키, Esc 취소</dd>
+      <dt>F2~F4 / Shift+F2~F4</dt><dd>저장한 화면으로 / 지금 화면 저장</dd>
+      <dt>Enter</dt><dd>채팅 (혼자 테스트에서는 show me the money, operation cwal)</dd>
+      <dt>Alt+미니맵 클릭</dt><dd>핑</dd>
       <dt>F9 (혼자 테스트만)</dt><dd>치트: 미네랄·가스 10000, 빠른 건설</dd>
     </dl>
   </div>

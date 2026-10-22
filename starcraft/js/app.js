@@ -66,7 +66,7 @@ async function init() {
 
 // Loads the map and starts a game. `me` is this player's index; `makeLockstep` builds the
 // command channel once the game slots are known.
-async function launch({ file, seed, players, me, cheats = false, makeLockstep }) {
+async function launch({ file, seed, players, me, cheats = false, names = [], onChat, makeLockstep }) {
   sound.unlock();
   showOnly('loading');
   progress(`${mapName(file)} 불러오는 중…`);
@@ -74,7 +74,10 @@ async function launch({ file, seed, players, me, cheats = false, makeLockstep })
   const mySlot = slots[me];
   engine.setViewer(mySlot);
   $('loading').hidden = true;
-  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, cheats, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
+  // Names by game slot, for chat lines.
+  const slotNames = [];
+  slots.forEach((slot, i) => { slotNames[slot] = names[i]; });
+  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, cheats, names: slotNames, onChat, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
   game.start();
   if (params.has('debug')) window.sc = { engine, game, online };
 }
@@ -85,7 +88,8 @@ async function startSolo() {
   // ?seed=N replays the same start (positions, random rolls), for testing.
   const seed = Number(params.get('seed')) || (Math.random() * 2 ** 32) >>> 0;
   try {
-    await launch({ file, seed, players: [0, 1], me: 0, cheats: true, makeLockstep: (slots, mySlot) => new SoloLockstep(mySlot) });
+    const name = $('player-name').value.trim() || 'Player';
+    await launch({ file, seed, players: [0, 1], me: 0, cheats: true, names: [name, 'Computer'], makeLockstep: (slots, mySlot) => new SoloLockstep(mySlot) });
   } catch (err) {
     showOnly('menu');
     $('notice').textContent = err.message;
@@ -257,9 +261,10 @@ function onGuestMessage(m) {
   }
 }
 
-// Messages during a match: lockstep packets and a surrender.
+// Messages during a match: lockstep packets, chat and a surrender.
 function gameMessage(m) {
   if (m.t === 'turn' || m.t === 'need') online.lockstep?.receive(m);
+  else if (m.t === 'chat' && game) game.showChat(game.slots[online.role === 'host' ? 1 : 0], String(m.text).slice(0, 80));
   else if (m.t === 'leave' && game && !game.ended) { game.ended = true; onGameEvent('left'); }
 }
 
@@ -280,7 +285,11 @@ async function startOnline(file, seed) {
   });
   online.lockstep = lockstep;
   try {
-    await launch({ file, seed, players: [0, 1], me, makeLockstep: (slots) => { lockstep.slots = slots; return lockstep; } });
+    await launch({
+      file, seed, players: [0, 1], me, names: [online.hostName, online.guestName],
+      onChat: (text) => online?.net.send({ t: 'chat', text }),
+      makeLockstep: (slots) => { lockstep.slots = slots; return lockstep; },
+    });
   } catch (err) {
     online.lockstep = null;
     showLobby();

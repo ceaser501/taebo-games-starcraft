@@ -103,3 +103,6 @@ button {
 #copy-code { font-size: 12px; padding: 2px 8px; background: #222; border: 1px solid #444; border-radius: 3px; }
 #lobby-players { margin: 0; padding-left: 18px; }
 #lobby-players li.empty { color: #777; }
+
+/* Off-screen: only collects typing for the in-game chat line. */
+#chat-input { position: fixed; left: -1000px; top: 0; width: 200px; opacity: 0; }
