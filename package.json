@@ -11,12 +11,13 @@
   "scripts": {
     "start": "webpack serve --open --config webpack.config.dev.js",
     "build": "webpack --config webpack.config.prod.js",
+    "deploy": "npx -y wrangler@3 pages deploy dist --project-name taesu-starcraft --branch main --commit-dirty=true",
     "sc:casc": "node starcraft/tools/casc.mjs",
-    "sc:pack": "node starcraft/tools/pack-data.mjs"
+    "sc:pack": "node starcraft/tools/pack-data.mjs",
+    "sc:engine": "sh starcraft/engine/build.sh"
   },
   "devDependencies": {
     "copy-webpack-plugin": "^11.0.0",
-    "html-webpack-plugin": "^5.6.0",
     "webpack": "^5.91.0",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.0.4",

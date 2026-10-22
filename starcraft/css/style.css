@@ -1,0 +1,220 @@
+/* The map view fills the window; panels sit on top. --ui-scale (set by the game) keeps the console
+   the same share of the screen as in the original 640x480. */
+:root {
+  --ui-scale: 1;
+  --green: #18fc10;
+  --panel: rgba(8, 10, 14, 0.92);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #ddd;
+  font: 14px/1.4 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+#view {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+  display: block;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ---- in-game ---- */
+
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#hud > * { pointer-events: auto; }
+
+#resources {
+  position: absolute;
+  top: calc(4px * var(--ui-scale));
+  right: calc(8px * var(--ui-scale));
+  display: flex;
+  gap: calc(14px * var(--ui-scale));
+  font-size: calc(11px * var(--ui-scale));
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  pointer-events: none;
+}
+.res { display: flex; align-items: center; gap: calc(3px * var(--ui-scale)); }
+.res canvas { width: calc(14px * var(--ui-scale)); height: calc(14px * var(--ui-scale)); image-rendering: pixelated; }
+#supply.full { color: #fc4040; }
+
+#topleft {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: calc(10px * var(--ui-scale));
+  color: #ccc;
+  text-shadow: 1px 1px 0 #000;
+}
+#menu-button {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid #3a4a3a;
+  padding: 1px 8px;
+  font-size: inherit;
+}
+#waiting { color: #fcfc38; }
+
+#notices {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(118px * var(--ui-scale));
+  text-align: center;
+  font-size: calc(11px * var(--ui-scale));
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, 0 0 4px #000;
+  pointer-events: none;
+}
+
+/* The console: minimap, selection, command card, like the original's bottom panel. */
+#console {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(110px * var(--ui-scale));
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: calc(6px * var(--ui-scale));
+  padding: calc(4px * var(--ui-scale));
+  background: linear-gradient(#20262c, #0d1013);
+  border-top: calc(2px * var(--ui-scale)) solid #3b4650;
+}
+
+#mini-frame {
+  width: calc(102px * var(--ui-scale));
+  height: calc(102px * var(--ui-scale));
+  background: #000;
+  border: 1px solid #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#minimap {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  image-rendering: pixelated;
+  cursor: pointer;
+}
+
+#info {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid #333;
+  padding: calc(4px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  font-size: calc(10px * var(--ui-scale));
+  color: #e8e8e8;
+  overflow: hidden;
+  text-align: center;
+}
+#info b { color: #fff; font-size: 1.1em; }
+#info .enemy { color: #fc5050; }
+#info small { color: #aaa; }
+#info .progress { margin: 4px auto 0; width: 70%; }
+#info.group { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; }
+#info .cell {
+  border: 1px solid var(--hp);
+  background: rgba(0, 0, 0, 0.6);
+  width: calc(28px * var(--ui-scale));
+  height: calc(26px * var(--ui-scale));
+}
+#info canvas, #info .cell canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+#info .queue { display: flex; gap: 2px; justify-content: center; margin-top: 3px; }
+#info .queue button {
+  width: calc(26px * var(--ui-scale));
+  height: calc(24px * var(--ui-scale));
+  padding: 0;
+  background: #111;
+  border: 1px solid #555;
+}
+
+.progress { height: 6px; background: #222; border: 1px solid #444; }
+.progress i { display: block; height: 100%; background: var(--green); }
+
+#card {
+  display: grid;
+  grid-template-columns: repeat(3, calc(34px * var(--ui-scale)));
+  grid-template-rows: repeat(3, calc(32px * var(--ui-scale)));
+  gap: calc(1px * var(--ui-scale));
+}
+#card button {
+  padding: 0;
+  background: #0b0d0b;
+  border: 1px solid #2c332c;
+  border-radius: 2px;
+}
+#card button:disabled { background: transparent; border-color: #161a16; cursor: default; }
+#card button:not(:disabled):hover { border-color: var(--green); }
+#card button.active { border-color: #fff; }
+#card canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+
+/* ---- menus ---- */
+
+.panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid #2f3b2f;
+  border-radius: 6px;
+  padding: 20px 24px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.panel[hidden] { display: none; }
+.panel h1 { margin: 0; letter-spacing: 0.2em; color: var(--green); font-size: 28px; text-align: center; }
+.panel h2 { margin: 0; }
+.panel .sub { margin: 0; color: #9a9; font-size: 13px; text-align: center; }
+.panel label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #aaa; }
+.panel select, .panel input {
+  font: inherit;
+  padding: 6px 8px;
+  background: #111;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 4px;
+}
+.panel > button, .panel form button {
+  padding: 9px 12px;
+  background: #1c3a1c;
+  border: 1px solid #2f6a2f;
+  border-radius: 4px;
+  color: #e8ffe8;
+}
+.panel > button:disabled { opacity: 0.5; cursor: default; }
+#notice, #gate-error { color: #fc8080; margin: 0; min-height: 1em; font-size: 13px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12px; margin: 6px 0 0; color: #aaa; }
+.keys dt { color: #ddd; }
+.keys dd { margin: 0; }
+#loading { min-width: 280px; text-align: center; }
+#loading .progress { height: 8px; }
+#loading-bar { width: 0; }
+#result h1 { font-size: 36px; }

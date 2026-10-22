@@ -1,7 +1,7 @@
 // Native check of the engine: loads the packed data and a map, plays a scripted opening,
 // and writes screenshots. Not part of the web build.
 //
-//   ./build-test.sh && ./bw-test ../assets/sc "../assets/sc/maps/ladder/(2)_fighting_spirit.scx" out
+//   starcraft/engine/build-test.sh && starcraft/engine/bw-test starcraft/assets/sc starcraft/assets/sc/maps/broodwar/_2_crystallis.scm /tmp/shot
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +9,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <zlib.h>
 
 extern "C" {
 uint8_t* bw_alloc(size_t n);
@@ -49,6 +50,16 @@ static std::string read_file(const std::string& path) {
 	return ss.str();
 }
 
+static std::string read_gz(const std::string& path) {
+	gzFile f = gzopen(path.c_str(), "rb");
+	std::string r;
+	char buf[1 << 16];
+	int n;
+	while (f && (n = gzread(f, buf, sizeof(buf))) > 0) r.append(buf, n);
+	if (f) gzclose(f);
+	return r;
+}
+
 static void save(const std::string& path, const uint8_t* rgba, int w, int h) {
 	FILE* f = fopen(path.c_str(), "wb");
 	fwrite(&w, 4, 1, f);
@@ -57,19 +68,24 @@ static void save(const std::string& path, const uint8_t* rgba, int w, int h) {
 	fclose(f);
 }
 
+extern "C" const uint8_t* bw_icon(int, int, int);
+extern "C" int bw_icon_w();
+extern "C" int bw_icon_h();
+extern "C" int bw_icon_count(int);
+extern "C" const char* bw_unit_type_json(int);
 void dump_icons();
 static void act(int slot, size_t n) { if (n) bw_action(slot, bw_out(), n); }
 
 int main(int argc, char** argv) {
 	if (argc < 4) { fprintf(stderr, "usage: bw-test <assets/sc> <map> <out prefix>\n"); return 1; }
 	std::string dir = argv[1];
-	static std::string bin = read_file(dir + "/data/core.bin");
+	static std::string bin = read_gz(dir + "/data/core.bin.gz");
 	static std::string idx = read_file(dir + "/data/core.idx");
 	bw_add_data((const uint8_t*)bin.data(), idx.c_str());
 	bw_init();
 	static const char* tilesets[] = {"badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight"};
 	std::string ts = tilesets[bw_map_tileset(argv[2])];
-	static std::string tbin = read_file(dir + "/data/" + ts + ".bin");
+	static std::string tbin = read_gz(dir + "/data/" + ts + ".bin.gz");
 	static std::string tidx = read_file(dir + "/data/" + ts + ".idx");
 	bw_add_data((const uint8_t*)tbin.data(), tidx.c_str());
 	int races[2] = {1, 1};
@@ -100,23 +116,18 @@ int main(int argc, char** argv) {
 	dump_icons();
 	return 0;
 }
-extern "C" const uint8_t* bw_icon(int, int);
-extern "C" int bw_icon_w();
-extern "C" int bw_icon_h();
-extern "C" int bw_icon_count();
-extern "C" const char* bw_unit_type_json(int);
 void dump_icons() {
 	{
 		// A sheet of the first 64 command icons, to check colours.
 		int n = 64, cols = 16;
-		bw_icon(0, 0);
+		bw_icon(0, 0, 0);
 		int w = bw_icon_w(), h = bw_icon_h();
 		std::vector<uint8_t> sheet((size_t)cols * w * (n / cols) * h * 4, 0);
 		for (int i = 0; i != n; ++i) {
-			const uint8_t* p = bw_icon(i + 224, 0);
+			const uint8_t* p = bw_icon(0, i + 224, 0);
 			for (int y = 0; y != h; ++y) memcpy(&sheet[(((i / cols) * h + y) * cols * w + (i % cols) * w) * 4], p + y * w * 4, w * 4);
 		}
 		save("icons.rgba", sheet.data(), cols * w, (n / cols) * h);
-		printf("icons %d (%dx%d), scv %s\n", bw_icon_count(), w, h, bw_unit_type_json(7));
+		printf("icons %d (%dx%d), scv %s\n", bw_icon_count(0), w, h, bw_unit_type_json(7));
 	}
 }

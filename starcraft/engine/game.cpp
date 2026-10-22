@@ -280,8 +280,22 @@ API int bw_start_y(int slot) { return g->game_st.start_locations.at(slot).y; }
 
 // Runs one action (Brood War action bytes) for a player slot. Returns whether it applied.
 API int bw_action(int slot, const uint8_t* data, size_t len) {
-	data_loading::data_reader_le r(data, data + len);
-	return g->read_action(slot, r) ? 1 : 0;
+	try {
+		data_loading::data_reader_le r(data, data + len);
+		return g->read_action(slot, r) ? 1 : 0;
+	} catch (const std::exception& e) {
+		text_out = e.what();
+		return -1;
+	}
+}
+
+// Makes the drawn selection match what the game has selected for the viewer (after a control
+// group recall, which picks units on the game's side).
+API int bw_sync_selection() {
+	if (g->viewer < 0) return 0;
+	g->current_selection_clear();
+	for (unit_t* u : g->action_st.selection.at(g->viewer)) g->current_selection_add(u);
+	return (int)g->current_selection.size();
 }
 
 API void bw_step() { g->state_functions::next_frame(); }
@@ -508,10 +522,10 @@ API const char* bw_selection_json() {
 		}
 		int resources = g->unit_is_mineral_field(u) || g->ut_resource(u) ? u->building.resource.resource_count : -1;
 		text_out += format("{\"id\":%d,\"type\":%d,\"owner\":%d,\"hp\":%d,\"maxHp\":%d,\"shields\":%d,\"energy\":%d,"
-			"\"completed\":%d,\"progress\":%d,\"queue\":%s,\"resources\":%d,\"carrying\":%d,\"order\":%d,\"building\":%d}",
+			"\"completed\":%d,\"progress\":%d,\"queue\":%s,\"resources\":%d,\"carrying\":%d,\"order\":%d,\"building\":%d,\"x\":%d,\"y\":%d}",
 			uid.raw_value, (int)ut->id, u->owner, u->hp.integer_part(), ut->hitpoints.integer_part(), ut->has_shield ? u->shield_points.integer_part() : -1,
 			g->ut_has_energy(u) ? u->energy.integer_part() : -1, g->u_completed(u) ? 1 : 0, progress, queue, resources,
-			u->carrying_flags & 2 ? 1 : u->carrying_flags & 1 ? 2 : 0, (int)u->order_type->id, g->ut_building(u) ? 1 : 0);
+			u->carrying_flags & 2 ? 1 : u->carrying_flags & 1 ? 2 : 0, (int)u->order_type->id, g->ut_building(u) ? 1 : 0, u->sprite->position.x, u->sprite->position.y);
 	}
 	text_out += "]";
 	return text_out.c_str();
@@ -550,24 +564,33 @@ API const char* bw_sound_file(int id) {
 	return text_out.c_str();
 }
 
-// One command card icon (cmdicons.grp frame) as RGBA, coloured through ticon.pcx row `row`
-// (0 normal, 1 disabled, 2 selected), transparent outside the icon. Size: bw_icon_w/h.
-static grp_t cmdicons;
+// An icon as RGBA, transparent around it. Set 0: command card icons (cmdicons.grp), coloured
+// through ticon.pcx row `row` (0 normal, 1 disabled, 2 lit). Set 1: the resource and supply icons
+// over the map (game/icons.grp; a stub in Remastered data). Size: bw_icon_w/h.
+static std::array<grp_t, 2> icon_grps;
 static pcx_image ticon;
 static a_vector<uint32_t> icon_rgba;
 static int icon_w = 0, icon_h = 0;
-API const uint8_t* bw_icon(int frame_index, int row) {
-	if (cmdicons.frames.empty()) {
+static grp_t& icon_grp(int set) {
+	static const char* files[] = {"unit/cmdicons/cmdicons.grp", "game/icons.grp"};
+	grp_t& grp = icon_grps.at(set);
+	if (grp.frames.empty()) {
 		a_vector<uint8_t> data;
-		pack.load(data, "unit/cmdicons/cmdicons.grp");
-		cmdicons = read_grp(data_loading::data_reader_le(data.data(), data.data() + data.size()));
-		pack.load(data, "game/ticon.pcx");
-		ticon = load_pcx_data(data);
+		pack.load(data, files[set]);
+		grp = read_grp(data_loading::data_reader_le(data.data(), data.data() + data.size()));
+		if (ticon.data.empty()) {
+			pack.load(data, "game/ticon.pcx");
+			ticon = load_pcx_data(data);
+		}
 	}
-	icon_w = (int)cmdicons.width;
-	icon_h = (int)cmdicons.height;
+	return grp;
+}
+API const uint8_t* bw_icon(int set, int frame_index, int row) {
+	grp_t& grp = icon_grp(set);
+	icon_w = (int)grp.width;
+	icon_h = (int)grp.height;
 	a_vector<uint8_t> indexed((size_t)icon_w * icon_h, 0);
-	auto& frame = cmdicons.frames.at(frame_index);
+	auto& frame = grp.frames.at(frame_index);
 	uint8_t* dst = indexed.data() + frame.offset.y * icon_w + frame.offset.x;
 	draw_frame<false, false, false>(frame, nullptr, dst, icon_w, 0, 0, frame.size.x, frame.size.y, no_remap());
 	icon_rgba.assign(indexed.size(), 0);
@@ -575,14 +598,11 @@ API const uint8_t* bw_icon(int frame_index, int row) {
 	for (size_t i = 0; i != indexed.size(); ++i) {
 		int c = indexed[i];
 		if (!c) continue;
-		if ((size_t)row < ticon.height && (size_t)c < ticon.width) c = ticon.data[row * ticon.width + c];
+		if (set == 0 && (size_t)row < ticon.height && (size_t)c < ticon.width) c = ticon.data[row * ticon.width + c];
 		icon_rgba[i] = (uint32_t)wpe[4 * c] | (uint32_t)wpe[4 * c + 1] << 8 | (uint32_t)wpe[4 * c + 2] << 16 | 0xff000000u;
 	}
 	return (const uint8_t*)icon_rgba.data();
 }
 API int bw_icon_w() { return icon_w; }
 API int bw_icon_h() { return icon_h; }
-API int bw_icon_count() {
-	if (cmdicons.frames.empty()) bw_icon(0, 0);
-	return (int)cmdicons.frames.size();
-}
+API int bw_icon_count(int set) { return (int)icon_grp(set).frames.size(); }

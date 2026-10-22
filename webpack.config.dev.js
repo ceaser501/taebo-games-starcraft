@@ -8,6 +8,10 @@ module.exports = merge(common, {
     liveReload: true,
     hot: true,
     open: true,
-    static: ['./'],
+    static: {
+      directory: './',
+      // IDE files and generated output change constantly and would trigger endless reloads.
+      watch: { ignored: /(node_modules|\.idea|\.git|\.vscode|dist|assets|\.DS_Store)/ },
+    },
   },
 });

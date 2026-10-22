@@ -74,13 +74,16 @@ for (const [name, list] of Object.entries(packs)) {
 }
 
 // Sounds stay separate files, fetched when first played. sfxdata.tbl names them relative to sound/.
+// SD/sound holds the original 22 kHz recordings; sound/ the Remastered ones, used where SD lacks a file.
 let sounds = 0;
-for (const rel of walk(path.join(src, 'sound'))) {
-  if (!/\.wav$/i.test(rel)) continue;
-  const dst = path.join(out, 'sound', rel.toLowerCase());
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.copyFileSync(path.join(src, 'sound', rel), dst);
-  sounds++;
+for (const dir of ['SD/sound', 'sound']) {
+  for (const rel of walk(path.join(src, dir))) {
+    const dst = path.join(out, 'sound', rel.toLowerCase());
+    if (!/\.wav$/i.test(rel) || fs.existsSync(dst)) continue;
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(path.join(src, dir, rel), dst);
+    sounds++;
+  }
 }
 
 // Maps: kept as the original MPQ (.scm/.scx); the engine reads scenario.chk out of them.

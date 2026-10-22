@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="StarCraft">
+  <title>StarCraft Web</title>
+  <link rel="stylesheet" href="css/style.css">
+  <meta name="description" content="브루드워 1:1 (브라우저)">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#000000">
+</head>
+
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud" hidden>
+    <div id="resources">
+      <span class="res"><i class="icon" data-icon="0"></i><b id="minerals">0</b></span>
+      <span class="res"><i class="icon" data-icon="1"></i><b id="gas">0</b></span>
+      <span class="res"><i class="icon" data-icon="4"></i><b id="supply">0/0</b></span>
+    </div>
+    <div id="topleft">
+      <button type="button" id="menu-button">메뉴 (F10)</button>
+      <span id="clock">0:00</span>
+      <span id="waiting" hidden>상대를 기다리는 중…</span>
+    </div>
+    <div id="notices"></div>
+    <div id="console">
+      <div id="mini-frame"><canvas id="minimap"></canvas></div>
+      <div id="info"></div>
+      <div id="card"></div>
+    </div>
+  </div>
+
+  <div id="pause" class="panel" hidden>
+    <h2>메뉴</h2>
+    <button type="button" id="resume">계속하기</button>
+    <button type="button" id="fullscreen">전체화면</button>
+    <button type="button" id="quit">나가기</button>
+  </div>
+
+  <div id="result" class="panel" hidden>
+    <h1 id="result-title"></h1>
+    <button type="button" id="result-ok">메뉴로</button>
+  </div>
+
+  <form id="gate" class="panel" hidden>
+    <h1>STARCRAFT</h1>
+    <label>비밀번호 <input id="gate-input" type="password" autocomplete="current-password"></label>
+    <button id="gate-ok" type="submit">입장</button>
+    <p id="gate-error"></p>
+  </form>
+
+  <div id="menu" class="panel">
+    <h1>STARCRAFT</h1>
+    <p class="sub">브루드워 · 테란 대 테란</p>
+    <label>맵 <select id="map"></select></label>
+    <button id="solo" type="button" disabled>불러오는 중…</button>
+    <p class="sub">혼자 테스트: 상대 기지는 가만히 있어요.</p>
+    <p id="notice"></p>
+    <dl class="keys">
+      <dt>왼쪽 클릭·드래그</dt><dd>선택 (Shift 추가, 더블클릭·Ctrl 같은 유닛 전부)</dd>
+      <dt>오른쪽 클릭</dt><dd>이동·공격·채취 (Shift 예약)</dd>
+      <dt>방향키, 미니맵</dt><dd>화면 이동 (전체화면에서는 화면 끝으로도)</dd>
+      <dt>Ctrl+숫자 / 숫자</dt><dd>부대 지정 / 부르기 (두 번 누르면 이동)</dd>
+      <dt>M S A P H G C B</dt><dd>명령 단축키, Esc 취소</dd>
+    </dl>
+  </div>
+
+  <div id="loading" class="panel" hidden>
+    <p id="loading-text">불러오는 중…</p>
+    <div class="progress"><i id="loading-bar"></i></div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+
+</html>

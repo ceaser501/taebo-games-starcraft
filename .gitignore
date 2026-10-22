@@ -15,3 +15,7 @@ starcraft/assets/sc/
 
 # Native engine test build
 starcraft/engine/bw-test
+
+# JetBrains IDE
+.idea/
+*.iml
