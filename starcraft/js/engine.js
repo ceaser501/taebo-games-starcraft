@@ -177,6 +177,13 @@ export class Engine {
   upgrade(id, slot) { return this.json(this.M._bw_upgrade_json(id, slot)); }
   canLand(tx, ty) { return !!this.M._bw_can_land(tx, ty); }
 
+  // Building preview drawn by the next render; returns { ok, tiles } (1 per tile that fits), or clears with type -1.
+  placement(type, tx, ty, land = false) {
+    const ok = !!this.M._bw_placement(type, tx, ty, land ? 1 : 0);
+    const n = this.M._bw_out ? this.M.HEAPU8.subarray(this.M._bw_out(), this.M._bw_out() + 64) : null;
+    return { ok, tiles: n };
+  }
+
   // Selection with the extra details merged in.
   selectionFull() {
     const sel = this.selection();

@@ -229,6 +229,19 @@ export class Game {
 
   draw(now) {
     this.resize();
+    // Building placement (and landing): where the pointer would put it, the building's image in
+    // the game picture, and a green or red square per tile, as in the original.
+    let place = null;
+    if ((this.mode?.kind === 'build' || this.mode?.kind === 'land') && this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
+      const w = this.toWorld(this.pointer);
+      const t = this.engine.unitType(this.mode.type);
+      const tx = Math.round((w.x - t.w / 2) / 32), ty = Math.round((w.y - t.h / 2) / 32);
+      const r = this.engine.placement(this.mode.type, tx, ty, this.mode.kind === 'land');
+      place = { tx, ty, tw: Math.ceil(t.w / 32), th: Math.ceil(t.h / 32), tiles: Array.from(r.tiles) };
+    } else if (this.placing) {
+      this.engine.placement(-1, 0, 0);
+    }
+    this.placing = !!place;
     const v = this.engine.render(this.image, this.view.x, this.view.y);
     this.view.x = v.x;
     this.view.y = v.y;
@@ -247,15 +260,17 @@ export class Game {
       ctx.stroke();
     }
 
-    // Building placement (and landing): the footprint in green where it fits, red where it does not.
-    if ((this.mode?.kind === 'build' || this.mode?.kind === 'land') && this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
-      const w = this.toWorld(this.pointer);
-      const t = this.engine.unitType(this.mode.type);
-      const tx = Math.round((w.x - t.w / 2) / 32), ty = Math.round((w.y - t.h / 2) / 32);
-      const tw = Math.ceil(t.w / 32), th = Math.ceil(t.h / 32);
-      const ok = this.mode.kind === 'land' ? this.engine.canLand(tx, ty) : this.engine.canPlace(this.mode.type, tx, ty);
-      ctx.fillStyle = ok ? 'rgba(24,252,16,0.35)' : 'rgba(252,16,16,0.4)';
-      ctx.fillRect(sx(tx * 32), sy(ty * 32), tw * 32, th * 32);
+    if (place) {
+      for (let j = 0; j < place.th; j++) {
+        for (let i = 0; i < place.tw; i++) {
+          const good = place.tiles[j * place.tw + i];
+          const x = sx((place.tx + i) * 32), y = sy((place.ty + j) * 32);
+          ctx.strokeStyle = good ? '#18fc10' : '#fc1010';
+          ctx.strokeRect(x + 1.5, y + 1.5, 29, 29);
+          ctx.fillStyle = good ? 'rgba(24,252,16,0.12)' : 'rgba(252,16,16,0.25)';
+          ctx.fillRect(x + 2, y + 2, 28, 28);
+        }
+      }
     }
 
     if (this.drag?.moved) {

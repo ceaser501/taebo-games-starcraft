@@ -94,6 +94,11 @@ struct web_ui : ui_functions {
 	int fog_row = 14;
 	a_vector<uint8_t> fog_levels;
 	virtual void draw_callback(uint8_t* data, size_t data_pitch) override {
+		draw_fog(data, data_pitch);
+		draw_placement(data, data_pitch);
+	}
+
+	void draw_fog(uint8_t* data, size_t data_pitch) {
 		if (viewer < 0) return;
 		int tw = game_st.map_tile_width, th = game_st.map_tile_height;
 		// Brightness per tile, for the tiles on screen plus a border of one.
@@ -137,6 +142,29 @@ struct web_ui : ui_functions {
 				p[x] = level <= 0 ? 0 : dark[256 * level + p[x]];
 			}
 		}
+	}
+
+	// Building placement preview: the building's image where it would stand, in the player's
+	// colours; the page draws the per-tile grid on top.
+	struct placement_t { bool on = false; const unit_type_t* type = nullptr; xy pos; int color = 0; } placement;
+
+	void draw_placement(uint8_t* data, size_t data_pitch) {
+		if (!placement.on) return;
+		const image_type_t* it = placement.type->flingy->sprite->image;
+		const grp_t* grp = global_st.image_grp.at((size_t)it->id);
+		if (!grp || grp->frames.empty()) return;
+		auto& frame = grp->frames.front();
+		int sx = placement.pos.x - (int)grp->width / 2 + (int)frame.offset.x - screen_pos.x;
+		int sy = placement.pos.y - (int)grp->height / 2 + (int)frame.offset.y - screen_pos.y;
+		int w = (int)frame.size.x, h = (int)frame.size.y;
+		if (sx >= (int)screen_width || sy >= (int)screen_height || sx + w <= 0 || sy + h <= 0) return;
+		size_t ox = sx < 0 ? -sx : 0, oy = sy < 0 ? -sy : 0;
+		uint8_t* dst = data + sy * (int)data_pitch + sx;
+		size_t cw = std::min(w, (int)screen_width - sx), ch = std::min(h, (int)screen_height - sy);
+		const uint8_t* colors = img.player_unit_colors.at(placement.color).data();
+		draw_frame(frame, false, dst, data_pitch, ox, oy, cw, ch, [&](uint8_t v, uint8_t) {
+			return v >= 8 && v < 16 ? colors[v - 8] : v;
+		});
 	}
 
 	// Sounds go to the page with a volume (0-100) and left/right pan (-100..100).
@@ -875,4 +903,53 @@ API const char* bw_events_json() {
 	if (g->nuke_launched) { g->nuke_launched = false; add("nuke", nullptr); }
 	text_out += "]";
 	return text_out.c_str();
+}
+
+// Placement preview for building `type` with its top-left on tile (tx, ty): the image is drawn by
+// the next bw_render, and the result per tile (1 fits, 0 does not, row by row) is in bw_out.
+// type -1 clears it. Returns whether the building can go there. `land` previews landing the
+// selected flying building.
+API int bw_placement(int type, int tx, int ty, int land) {
+	auto& pl = g->placement;
+	out.clear();
+	if (type < 0 || g->viewer < 0) { pl.on = false; return 0; }
+	const unit_type_t* ut = g->get_unit_type((UnitTypes)type);
+	unit_t* builder = g->current_selection.size() == 1 ? g->get_unit(g->current_selection.front()) : nullptr;
+	if (builder && !own_unit(builder)) builder = nullptr;
+	int me = g->viewer;
+	int tw = ut->placement_size.x / 32, th = ut->placement_size.y / 32;
+	xy center(tx * 32 + ut->placement_size.x / 2, ty * 32 + ut->placement_size.y / 2);
+	pl = {true, ut, center, g->st.players[me].color};
+	bool ok = builder && g->can_place_building(builder, me, ut, center, true, true);
+	int mask = 1 << me;
+	auto& gs = g->game_st;
+	bool depot = g->ut_resource_depot(ut);
+	for (int y = ty; y < ty + th; ++y) {
+		for (int x = tx; x < tx + tw; ++x) {
+			bool good = x >= 0 && y >= 0 && x < (int)gs.map_tile_width && y < (int)gs.map_tile_height;
+			if (good && g->unit_is_refinery(ut)) {
+				good = ok;
+			} else if (good) {
+				auto& tile = g->st.tiles[y * gs.map_tile_width + x];
+				int flags_mask = tile_t::flag_partially_walkable | tile_t::flag_unbuildable | tile_t::flag_has_creep;
+				if (tile.explored & mask) good = false;
+				else if (tile.flags & flags_mask) good = false;
+				else if (tile.flags & tile_t::flag_occupied && !(builder && land == 0 && g->u_grounded_building(builder))) good = false;
+				else {
+					rect r{xy(x * 32, y * 32), xy(x * 32 + 32, y * 32 + 32)};
+					for (unit_t* n : g->find_units_noexpand(r)) {
+						if (n == builder || g->u_flying(n) || g->u_grounded_building(n)) continue;
+						good = false;
+						break;
+					}
+					if (good && depot) {
+						rect bb{xy(32 * (x - 3), 32 * (y - 3)), xy(32 * (x + 4), 32 * (y + 4))};
+						for (unit_t* n : g->find_units_noexpand(bb)) if (g->ut_resource(n)) { good = false; break; }
+					}
+				}
+			}
+			out.push_back(good ? 1 : 0);
+		}
+	}
+	return ok ? 1 : 0;
 }
