@@ -35,7 +35,11 @@ export class Game {
     this.screens = {}; // F2-F4 saved views
     this.chat = null; // the line being typed, while chatting
     this.canvas = document.getElementById('view');
-    this.canvas.width = SCREEN.w;
+    // The screen is 480 high like the original and as wide as the window's shape (640 at 4:3,
+    // more on wide screens); the 640-wide console sits in the middle.
+    this.W = SCREEN.w;
+    this.ox = 0;
+    this.canvas.width = this.W;
     this.canvas.height = SCREEN.h;
     this.ctx = this.canvas.getContext('2d');
     this.ctx.imageSmoothingEnabled = false;
@@ -64,6 +68,9 @@ export class Game {
     this.engine.onSound = (file, volume, pan, priority, flags) => this.sound.play(file, volume, pan, !!(flags & 0x10));
     this.alerts = { base: 0, forces: 0 };
     this.pings = [];
+    // The game runs full screen; a page may only ask for it when the player clicks, so the start
+    // button asks (app.js) and otherwise the first click in the game does.
+    this.wantFullscreen = true;
   }
 
   // ---- what the original announces: unit ready, job finished, research done, under attack, nukes ----
@@ -88,7 +95,7 @@ export class Game {
           // A warning and a blink on the minimap, at most every 15 s for buildings and for units each,
           // and not for fights on screen.
           const kind = e.building ? 'base' : 'forces';
-          const onScreen = e.x >= this.view.x && e.x < this.view.x + SCREEN.w && e.y >= this.view.y && e.y < this.view.y + SCREEN.h - 100;
+          const onScreen = e.x >= this.view.x && e.x < this.view.x + this.W && e.y >= this.view.y && e.y < this.view.y + SCREEN.h - 100;
           if (onScreen || now - this.alerts[kind] < 15000) break;
           this.alerts[kind] = now;
           this.sound.play(ADVISOR[kind][this.race]);
@@ -108,7 +115,7 @@ export class Game {
     const buttons = [];
     if (!this.online) buttons.push({ label: paused ? 'Resume Game' : 'Pause Game', run: () => { this.lockstep.paused = !paused; this.openMenu(); } });
     buttons.push({ label: document.fullscreenElement ? 'Window Mode' : 'Full Screen', run: () => {
-      if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {});
+      if (document.fullscreenElement) document.exitFullscreen(); else { this.wantFullscreen = true; this.fullscreen(); }
       this.closeDialog();
     } });
     buttons.push({ label: 'End Mission', run: () => this.openEndMenu() });
@@ -184,10 +191,36 @@ export class Game {
     this.messages = this.messages.slice(-6);
   }
 
+  // Portrait clips are PNG strips of frames (all browsers); WebM files only if the data was packed
+  // without ffmpeg.
   playClip(file) {
     if (!file) return;
+    const clip = this.ui.meta.portraitClips?.[file];
+    if (clip) {
+      const [frames, fps, w, h] = clip;
+      this.portraitImages ??= new Map();
+      const url = PORTRAITS + file.replace(/\.webm$/, '.png');
+      if (!this.portraitImages.has(url)) this.portraitImages.set(url, Object.assign(new Image(), { src: url }));
+      this.clip = { img: this.portraitImages.get(url), frames, fps, w, h, start: performance.now() };
+      return;
+    }
+    this.clip = null;
     this.video.src = PORTRAITS + file;
     this.video.play().catch(() => {});
+  }
+
+  // What the portrait window shows now: a frame of the current strip, or the video.
+  portraitFrame(now) {
+    const c = this.clip;
+    if (!c) return this.video;
+    if (!c.img.complete || !c.img.naturalWidth) { c.start = now; return null; }
+    const f = Math.floor((now - c.start) * c.fps / 1000);
+    if (f >= c.frames) {
+      this.portraitIdle(); // next clip (or the same one again)
+      if (this.clip === c) c.start = now;
+      return this.portraitFrame(now);
+    }
+    return { img: c.img, sx: f * c.w, w: c.w, h: c.h };
   }
 
   portraitIdle() {
@@ -203,7 +236,7 @@ export class Game {
     if (set === this.portraitSet) return;
     this.portraitSet = set;
     if (set) this.portraitIdle();
-    else this.video.removeAttribute('src');
+    else { this.clip = null; this.video.removeAttribute('src'); }
   }
 
   portraitTalk() {
@@ -233,6 +266,7 @@ export class Game {
     for (const [target, type, fn, opts] of this.listeners) target.removeEventListener(type, fn, opts);
     this.listeners = [];
     this.canvas.style.cursor = '';
+    if (document.pointerLockElement) document.exitPointerLock?.();
     this.video.pause();
     this.video.removeAttribute('src');
   }
@@ -283,25 +317,41 @@ export class Game {
 
   // ---- screen ----
 
-  // The 640x480 screen is scaled to fit the window, keeping 4:3 (black bars on the sides).
+  // The screen fills the window (or the monitor in full screen): 480 game pixels high and as many
+  // wide as the window's shape needs, so nothing is stretched and there are no black bars.
   resize() {
-    const scale = Math.min(window.innerWidth / SCREEN.w, window.innerHeight / SCREEN.h);
-    if (scale === this.scale) return;
-    this.scale = scale;
-    this.canvas.style.width = `${Math.floor(SCREEN.w * scale)}px`;
-    this.canvas.style.height = `${Math.floor(SCREEN.h * scale)}px`;
+    const ww = window.innerWidth, wh = window.innerHeight;
+    if (ww === this.winW && wh === this.winH) return;
+    this.winW = ww;
+    this.winH = wh;
+    const W = Math.max(SCREEN.w, Math.min(1152, Math.round(SCREEN.h * ww / wh / 2) * 2));
+    if (W !== this.W) {
+      this.W = W;
+      this.ox = Math.floor((W - SCREEN.w) / 2);
+      this.canvas.width = W;
+      this.ctx.imageSmoothingEnabled = false;
+      this.image = new ImageData(W, SCREEN.h);
+    }
+    this.scale = wh / SCREEN.h;
+    this.canvas.style.width = `${ww}px`;
+    this.canvas.style.height = `${wh}px`;
     this.cursorKey = null;
   }
 
+  // Screen position -> console coordinates (the console art is 640 wide, centred).
+  toConsole(p) { return { x: p.x - this.ox, y: p.y }; }
+
   center(x, y) {
-    this.view.x = x - SCREEN.w / 2;
+    this.view.x = x - this.W / 2;
     this.view.y = y - (SCREEN.h - 120) / 2;
   }
 
-  // Page position -> screen pixel (0-639, 0-479).
+  // Page position -> screen pixel (0..W-1, 0-479). With the mouse captured (full screen), the
+  // game moves its own cursor and clicks happen where that cursor is.
   toScreen(e) {
+    if (this.locked) return { ...this.pointer };
     const r = this.canvas.getBoundingClientRect();
-    return { x: Math.floor((e.clientX - r.left) * SCREEN.w / r.width), y: Math.floor((e.clientY - r.top) * SCREEN.h / r.height) };
+    return { x: Math.floor((e.clientX - r.left) * this.W / r.width), y: Math.floor((e.clientY - r.top) * SCREEN.h / r.height) };
   }
 
   toWorld(p) { return { x: Math.round(this.view.x + p.x), y: Math.round(this.view.y + p.y) }; }
@@ -312,11 +362,11 @@ export class Game {
     if (this.keys.has('ArrowRight')) dx += 1;
     if (this.keys.has('ArrowUp')) dy -= 1;
     if (this.keys.has('ArrowDown')) dy += 1;
-    // Screen-edge scrolling, only in full screen where the edge is the monitor's.
+    // Screen-edge scrolling: the mouse at the edge of the window or monitor moves the view.
     this.edge = null;
-    if (document.fullscreenElement && this.pointer && !this.drag) {
+    if (this.pointer && this.pointerIn && !this.drag && !this.dialog && !this.miniDrag) {
       const p = this.pointer;
-      const ex = p.x <= 1 ? -1 : p.x >= SCREEN.w - 2 ? 1 : 0, ey = p.y <= 1 ? -1 : p.y >= SCREEN.h - 2 ? 1 : 0;
+      const ex = p.x <= 1 ? -1 : p.x >= this.W - 2 ? 1 : 0, ey = p.y <= 1 ? -1 : p.y >= SCREEN.h - 2 ? 1 : 0;
       dx += ex;
       dy += ey;
       if (ex || ey) this.edge = ['ul', 'u', 'ur', 'l', '', 'r', 'dl', 'd', 'dr'][(ey + 1) * 3 + ex + 1];
@@ -327,6 +377,7 @@ export class Game {
 
   draw(now) {
     this.resize();
+    this.ui.ox = this.ox;
     // Building placement (and landing): where the pointer would put it, the building's image in
     // the game picture, and a green or red square per tile, as in the original.
     let place = null;
@@ -348,8 +399,19 @@ export class Game {
     const sx = (x) => x - this.view.x, sy = (y) => y - this.view.y;
 
     // Where a right click or order went.
-    this.markers = this.markers.filter((m) => now - m.t < 300);
+    this.markers = this.markers.filter((m) => now - m.t < (m.unit ? 600 : 300));
     for (const m of this.markers) {
+      // Ordered onto a unit: its outline flashes three times instead (green, red when attacked,
+      // yellow for minerals and other neutral things), as in the original.
+      if (m.unit) {
+        if (Math.floor((now - m.t) / 100) % 2) continue;
+        const u = m.unit;
+        ctx.strokeStyle = m.color;
+        ctx.beginPath();
+        ctx.ellipse(sx(u.x) + 0.5, sy(u.y + u.h * 0.5) + 0.5, Math.max(8, u.w), Math.max(5, u.w * 0.6), 0, 0, Math.PI * 2);
+        ctx.stroke();
+        continue;
+      }
       const k = 1 - (now - m.t) / 300;
       ctx.strokeStyle = m.color;
       ctx.lineWidth = 1;
@@ -373,16 +435,33 @@ export class Game {
         }
         ctx.restore();
       }
+      // Each tile is a dithered square, every other pixel green (fits) or red (does not), as in the
+      // original; the pattern is anchored to the map so it does not crawl while scrolling.
+      const pattern = (good) => {
+        const key = good ? 'placeGood' : 'placeBad';
+        if (!this[key]) {
+          const c = document.createElement('canvas');
+          c.width = c.height = 2;
+          const g = c.getContext('2d');
+          g.fillStyle = good ? '#20d018' : '#e01010';
+          g.fillRect(0, 0, 1, 1);
+          g.fillRect(1, 1, 1, 1);
+          this[key] = ctx.createPattern(c, 'repeat');
+        }
+        return this[key];
+      };
+      const ox = Math.round(this.view.x) & 1, oy = Math.round(this.view.y) & 1;
+      ctx.save();
+      ctx.translate(-ox, -oy);
       for (let j = 0; j < place.th; j++) {
         for (let i = 0; i < place.tw; i++) {
           const good = place.tiles[j * place.tw + i];
-          const x = sx((place.tx + i) * 32), y = sy((place.ty + j) * 32);
-          ctx.strokeStyle = good ? '#18fc10' : '#fc1010';
-          ctx.strokeRect(x + 1.5, y + 1.5, 29, 29);
-          ctx.fillStyle = good ? 'rgba(24,252,16,0.12)' : 'rgba(252,16,16,0.25)';
-          ctx.fillRect(x + 2, y + 2, 28, 28);
+          const x = Math.round(sx((place.tx + i) * 32)) + ox, y = Math.round(sy((place.ty + j) * 32)) + oy;
+          ctx.fillStyle = pattern(good);
+          ctx.fillRect(x, y, 32, 32);
         }
       }
+      ctx.restore();
     }
 
     if (this.drag?.moved) {
@@ -409,7 +488,8 @@ export class Game {
       pings: (this.pings = this.pings.filter((p) => now - p.t < 3000)),
       now,
       minimapSize: { w: this.map.width, h: this.map.height },
-      viewRect: { x: this.view.x, y: this.view.y, w: SCREEN.w, h: SCREEN.h },
+      viewRect: { x: this.view.x, y: this.view.y, w: this.W, h: SCREEN.h },
+      screenRight: this.W - this.ox,
       chat: this.chat,
       messages: [
         ...this.messages,
@@ -417,7 +497,7 @@ export class Game {
         ...(this.banner ? [{ text: this.banner, color: COLOR.yellow }] : []),
       ],
       clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
-      portrait: this.video,
+      portrait: this.portraitFrame(now),
       techIcon: (id) => this.engine.tech(id).icon,
       upgradeIcon: (id) => this.engine.upgrade(id, this.me).icon,
       drawIcon: (c, frame, x, y, row, w, h) => {
@@ -428,6 +508,13 @@ export class Game {
     });
     if (this.dialog) this.ui.drawDialog(ctx, this.dialog, this.dialogHover);
     this.updateCursor(now);
+    // Captured mouse (full screen): the game draws its own cursor, as the original does.
+    if (this.locked && this.pointer) {
+      const { name, frame } = this.cursorState;
+      const r = this.ui.meta.sheets[`cursor-${name}`].frames[frame];
+      const hot = name === 'arrow' ? [0, 0] : [r[2] >> 1, r[3] >> 1];
+      this.ui.frame(ctx, `cursor-${name}`, frame, this.pointer.x - hot[0], this.pointer.y - hot[1]);
+    }
   }
 
   // The original cursors: arrow, green/yellow/red magnifier over own/neutral/enemy units,
@@ -440,6 +527,11 @@ export class Game {
     else if (this.hoverUnit) name = this.hoverUnit.owner === this.me ? 'magg' : this.hoverUnit.owner >= 8 ? 'magy' : 'magr';
     const frames = this.ui.meta.sheets[`cursor-${name}`]?.frames.length || 1;
     const frame = Math.floor(now / 100) % frames;
+    this.cursorState = { name, frame };
+    if (this.locked) {
+      if (this.cursorKey !== 'none') { this.cursorKey = 'none'; this.canvas.style.cursor = 'none'; }
+      return;
+    }
     const key = `${name}:${frame}:${this.scale}`;
     if (key !== this.cursorKey) {
       this.cursorKey = key;
@@ -500,7 +592,7 @@ export class Game {
     this.mode = null;
     if (m.kind === 'order') {
       this.send(this.engine.cmd.order(m.order, world.x, world.y, queue));
-      this.markers.push({ ...world, t: performance.now(), color: m.order === Orders.AttackDefault ? '#fc1010' : '#18fc10' });
+      this.mark(world, m.order === Orders.AttackDefault ? '#fc1010' : null);
       this.acknowledge();
     } else if (m.kind === 'land') {
       const t = this.engine.unitType(m.type);
@@ -526,11 +618,18 @@ export class Game {
     }
   }
 
+  // Where an order went: a shrinking circle on the ground, or the target unit flashing.
+  mark(world, color) {
+    const unit = this.engine.unitInfo(world.x, world.y);
+    const c = color || (!unit || unit.owner === this.me ? '#18fc10' : unit.owner >= 8 ? '#fcfc38' : '#fc1010');
+    this.markers.push({ ...world, unit, t: performance.now(), color: c });
+  }
+
   rightClick(world, queue) {
     if (this.mode) { this.mode = null; return; }
     if (!this.selection.some((u) => u.owner === this.me)) return;
     this.send(this.engine.cmd.rightClick(world.x, world.y, queue));
-    this.markers.push({ ...world, t: performance.now(), color: '#18fc10' });
+    this.mark(world, null);
     this.acknowledge();
   }
 
@@ -568,15 +667,59 @@ export class Game {
     return r && p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
   }
 
+  fullscreen() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    try { req?.call(el)?.catch?.(() => {}); } catch { /* not allowed now */ }
+  }
+
+  grab(e) {
+    if (this.locked) return;
+    try { this.canvas.setPointerCapture(e.pointerId); } catch { /* fine without */ }
+  }
+
+  capture() {
+    if (this.locked || !this.canvas.requestPointerLock || window.scNoCapture) return; // scNoCapture: automated tests
+    if (!this.pointer) this.pointer = { x: this.W / 2, y: SCREEN.h / 2 };
+    try { this.canvas.requestPointerLock()?.catch?.(() => {}); } catch { /* needs a click */ }
+  }
+
   bindInput() {
     const view = this.canvas;
     this.on(window, 'resize', () => this.resize());
     this.on(view, 'contextmenu', (e) => e.preventDefault());
+    // Full screen captures the mouse (it cannot leave the game, so the screen edges scroll);
+    // leaving full screen (Esc) releases it and the game goes back to a window.
+    this.on(document, 'pointerlockchange', () => {
+      this.locked = document.pointerLockElement === view;
+      if (!this.locked && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    });
+    this.on(document, 'fullscreenchange', () => {
+      if (document.fullscreenElement) { this.capture(); return; }
+      // Left full screen (Esc): stay in a window until the menu's Full Screen.
+      this.wantFullscreen = false;
+      if (document.pointerLockElement) document.exitPointerLock?.();
+    });
+    this.on(document, 'mouseleave', () => { if (!this.locked) this.pointerIn = false; });
     this.on(window, 'pointermove', (e) => {
-      const p = this.toScreen(e);
-      this.pointer = p;
+      if (this.locked) {
+        const r = this.canvas.getBoundingClientRect();
+        const p0 = this.pointer || { x: this.W / 2, y: SCREEN.h / 2 };
+        this.subPx = (this.subPx || 0) + e.movementX * this.W / r.width;
+        this.subPy = (this.subPy || 0) + e.movementY * SCREEN.h / r.height;
+        const dx = Math.trunc(this.subPx), dy = Math.trunc(this.subPy);
+        this.subPx -= dx;
+        this.subPy -= dy;
+        this.pointer = { x: Math.max(0, Math.min(this.W - 1, p0.x + dx)), y: Math.max(0, Math.min(SCREEN.h - 1, p0.y + dy)) };
+      } else {
+        this.pointer = this.toScreen(e);
+      }
+      this.pointerIn = true;
+      const p = this.pointer;
       if (this.dialog) { this.dialogHover = this.ui.dialogButtonAt(this.dialog, p.x, p.y); this.hoverPos = -1; return; }
       this.hoverPos = this.ui.cardAt(p.x, p.y);
+      // The cursor changes over units right away (magnifier: green own, yellow neutral, red enemy).
+      if (!this.ui.onConsole(p.x, p.y)) { const w = this.toWorld(p); this.hoverUnit = this.engine.unitAt(w.x, w.y); } else this.hoverUnit = null;
       if (this.hoverPos >= 0 && !this.buttons.some((b) => b.pos === this.hoverPos)) this.hoverPos = -1;
       if (this.miniDrag) { const w = this.minimapWorld(p); this.center(w.x, w.y); }
       if (this.drag) {
@@ -589,6 +732,9 @@ export class Game {
     this.on(view, 'pointerdown', (e) => {
       e.preventDefault();
       this.sound.unlock();
+      // Back in full screen on a click (a page may only go full screen when the player acts).
+      if (!document.fullscreenElement && this.wantFullscreen) this.fullscreen();
+      else if (document.fullscreenElement && !this.locked) this.capture();
       const p = this.toScreen(e);
       this.pointer = p;
       if (this.dialog) {
@@ -602,14 +748,14 @@ export class Game {
         if (e.altKey && e.button === 0) { this.send(Uint8Array.of(88, w.x & 255, w.x >> 8, w.y & 255, w.y >> 8)); return; }
         if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
         if (this.mode) { this.issueAt(w, e.shiftKey); return; }
-        view.setPointerCapture(e.pointerId);
+        this.grab(e);
         this.miniDrag = true;
         this.center(w.x, w.y);
         return;
       }
       const pos = this.ui.cardAt(p.x, p.y);
       const button = this.buttons.find((b) => b.pos === pos);
-      if (button && e.button === 0) { this.pressedPos = pos; view.setPointerCapture(e.pointerId); return; }
+      if (button && e.button === 0) { this.pressedPos = pos; this.grab(e); return; }
       const passenger = this.ui.passengerAt(p.x, p.y);
       if (passenger != null && e.button === 0) { this.send(this.engine.cmd.unload(passenger)); return; }
       if (this.ui.onConsole(p.x, p.y)) return;
@@ -617,7 +763,7 @@ export class Game {
       if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
       if (e.button !== 0) return;
       if (this.mode) { this.issueAt(w, e.shiftKey); return; }
-      view.setPointerCapture(e.pointerId);
+      this.grab(e);
       this.drag = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, moved: false };
     });
     this.on(view, 'pointerup', (e) => {

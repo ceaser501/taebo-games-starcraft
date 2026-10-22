@@ -627,12 +627,13 @@ API const char* bw_player_json(int slot) {
 API const char* bw_unit_type_json(int id) {
 	const unit_type_t* ut = g->get_unit_type((UnitTypes)id);
 	text_out = format("{\"id\":%d,\"minerals\":%d,\"gas\":%d,\"supply\":%d,\"time\":%d,\"w\":%d,\"h\":%d,\"hp\":%d,"
-		"\"ready\":%d,\"what\":[%d,%d],\"yes\":[%d,%d],\"pissed\":[%d,%d],\"portrait\":%d,\"race\":%d,\"psi\":%d,\"creep\":%d}",
+		"\"ready\":%d,\"what\":[%d,%d],\"yes\":[%d,%d],\"pissed\":[%d,%d],\"portrait\":%d,\"race\":%d,\"psi\":%d,\"creep\":%d,\"attackMove\":%d,\"attackUnit\":%d}",
 		id, ut->mineral_cost, ut->gas_cost, (int)ut->supply_required.raw_value / 2, ut->build_time,
 		ut->placement_size.x, ut->placement_size.y, ut->hitpoints.integer_part(),
 		ut->ready_sound, ut->first_what_sound, ut->last_what_sound, ut->first_yes_sound, ut->last_yes_sound,
 		ut->first_pissed_sound, ut->last_pissed_sound, ut->portrait, (int)g->unit_race(ut),
-		g->ut_requires_psionic_matrix(ut) ? 1 : 0, g->ut_requires_creep(ut) ? 1 : 0);
+		g->ut_requires_psionic_matrix(ut) ? 1 : 0, g->ut_requires_creep(ut) ? 1 : 0,
+		ut->attack_move ? (int)ut->attack_move->id : -1, ut->attack_unit ? (int)ut->attack_unit->id : -1);
 	return text_out.c_str();
 }
 
@@ -1041,3 +1042,14 @@ API int bw_nukes_ready(int slot) {
 
 // Whether a world position is inside one of the viewer's pylon fields (Protoss buildings need it).
 API int bw_powered_at(int x, int y) { return g->viewer >= 0 && g->is_in_psionic_matrix(g->viewer, xy(x, y)) ? 1 : 0; }
+
+// The unit under a world position for the page's target flash: owner, centre and half size,
+// or "null" when there is none.
+API const char* bw_unit_info(int x, int y) {
+	unit_t* u = g->select_get_unit_at({x, y});
+	if (!u || !g->sprite_visible_to_viewer(u->sprite)) { text_out = "null"; return text_out.c_str(); }
+	auto& d = u->unit_type->dimensions;
+	text_out = format("{\"owner\":%d,\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}", u->owner, u->sprite->position.x, u->sprite->position.y,
+		(d.from.x + d.to.x + 1) / 2, (d.from.y + d.to.y + 1) / 2);
+	return text_out.c_str();
+}

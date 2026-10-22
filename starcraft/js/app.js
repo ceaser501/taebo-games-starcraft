@@ -87,7 +87,16 @@ async function launch({ file, seed, races, me, cheats = false, names = [], onCha
   if (params.has('debug')) window.sc = { engine, game, online };
 }
 
+// The game runs full screen. Browsers allow that only right when the player clicks, so the
+// buttons that start a game ask for it before anything loads.
+function goFullscreen() {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  try { req?.call(el)?.catch?.(() => {}); } catch { /* the first click in the game asks again */ }
+}
+
 async function startSolo() {
+  goFullscreen();
   const file = $('map').value;
   localStorageSet('sc-map', file);
   // ?seed=N replays the same start (positions, random rolls), for testing.
@@ -119,6 +128,7 @@ function opponentLeft() {
 
 function endGame() {
   game?.stop();
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   game = null;
   if (online) online.lockstep = null;
   $('view').getContext('2d').clearRect(0, 0, 1e5, 1e5);
@@ -287,6 +297,7 @@ function gameMessage(m) {
 }
 
 function startHostMatch() {
+  goFullscreen();
   online.map = $('lobby-map').value;
   localStorageSet('sc-map', online.map);
   const seed = (Math.random() * 2 ** 32) >>> 0;

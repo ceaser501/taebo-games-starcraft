@@ -167,6 +167,7 @@ export class Engine {
   }
 
   poweredAt(x, y) { return !!this.M._bw_powered_at(x, y); }
+  unitInfo(x, y) { return this.json(this.M._bw_unit_info(x, y)); }
   canPlace(type, tx, ty) { return !!this.M._bw_can_place(type, tx, ty); }
 
   unitType(id) {

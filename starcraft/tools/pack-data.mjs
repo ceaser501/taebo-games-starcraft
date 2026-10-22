@@ -11,6 +11,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { readDds, readDdsGrp, sheet, readFont, readPcx, encodePng } from './image-formats.mjs';
 
 const src = path.resolve(process.argv[2] || '../taebo-games-starcraft-assets');
@@ -18,6 +20,35 @@ const out = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../as
 if (!fs.existsSync(path.join(src, 'arr', 'units.dat'))) {
   console.error(`StarCraft data not found at ${src}`);
   process.exit(1);
+}
+
+// ffmpeg from the ffmpeg-static package (installed with the dev dependencies), else from PATH.
+function findFfmpeg() {
+  try {
+    const bin = createRequire(import.meta.url)('ffmpeg-static');
+    if (bin && fs.existsSync(bin)) return bin;
+  } catch { /* not installed */ }
+  return spawnSync('ffmpeg', ['-version']).status === 0 ? 'ffmpeg' : null;
+}
+
+// All frames of a clip as one RGBA strip, side by side.
+function decodeClip(ffmpeg, file) {
+  const info = spawnSync(ffmpeg, ['-hide_banner', '-i', file], { encoding: 'utf8' }).stderr || '';
+  const size = info.match(/Video:.*?(\d+)x(\d+)/);
+  if (!size) return null;
+  const w = Number(size[1]), h = Number(size[2]);
+  const fps = Number(info.match(/([\d.]+) fps/)?.[1]) || 10;
+  const r = spawnSync(ffmpeg, ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 1 << 28 });
+  if (r.status !== 0 || !r.stdout?.length) return null;
+  const frames = Math.floor(r.stdout.length / (w * h * 4));
+  if (!frames) return null;
+  const rgba = new Uint8Array(w * frames * h * 4);
+  for (let f = 0; f < frames; f++) {
+    for (let y = 0; y < h; y++) {
+      rgba.set(r.stdout.subarray((f * h + y) * w * 4, (f * h + y + 1) * w * 4), (y * w * frames + f * w) * 4);
+    }
+  }
+  return { w, h, fps, frames, rgba };
 }
 
 function walk(dir, base = dir) {
@@ -194,11 +225,23 @@ if (fs.existsSync(portraitDir)) {
     return fs.readdirSync(dir).filter((f) => f.startsWith(stem) && f.endsWith('.webm')).sort().map((f) => `${folder}/${f}`);
   };
   for (let i = 0; i < count; i++) ui.portraits.push({ idle: clips(pdat.readUInt32LE(i * 4)), talk: clips(pdat.readUInt32LE((count + i) * 4)) });
+  // The clips are VP9 in RGB, which Safari cannot play, so each becomes a PNG strip of its frames
+  // (decoded with ffmpeg) that the page draws itself; ui.portraitClips gives frames, rate and size.
+  // Without ffmpeg the WebM files are copied as they are.
+  const ffmpeg = findFfmpeg();
+  ui.portraitClips = {};
+  let strips = 0;
   for (const rel of walk(portraitDir)) {
     const dst = path.join(out, 'portrait', rel.toLowerCase());
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(path.join(portraitDir, rel), dst);
+    const clip = ffmpeg && /\.webm$/i.test(rel) ? decodeClip(ffmpeg, path.join(portraitDir, rel)) : null;
+    if (!clip) { fs.copyFileSync(path.join(portraitDir, rel), dst); continue; }
+    fs.writeFileSync(dst.replace(/\.webm$/, '.png'), encodePng(clip.w * clip.frames, clip.h, clip.rgba));
+    ui.portraitClips[rel.toLowerCase()] = [clip.frames, clip.fps, clip.w, clip.h];
+    strips++;
   }
+  if (!ffmpeg) console.warn('ffmpeg not found (npm install puts one in node_modules): portraits stay WebM only, which Safari cannot show.');
+  else console.log(`${strips} portrait clips as PNG strips`);
 }
 fs.writeFileSync(path.join(uiDir, 'ui.json'), JSON.stringify(ui));
 

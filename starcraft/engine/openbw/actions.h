@@ -495,7 +495,17 @@ struct action_functions: state_functions {
 			const order_type_t* subunit_order = get_order_type(Orders::Nothing);
 			if (order->id == Orders::AttackDefault) {
 				if (target) order = u->unit_type->attack_unit;
-				else order = u->unit_type->attack_move;
+				else {
+					// The Remastered units.dat gives most units an idle order (Guard, Carrier, Reaver...)
+					// as their attack-move order; attack-move by what they attack with instead.
+					order = u->unit_type->attack_move;
+					switch (u->unit_type->attack_unit->id) {
+					case Orders::AttackUnit: order = get_order_type(Orders::AttackMove); break;
+					case Orders::CarrierAttack: order = get_order_type(Orders::CarrierFight); break;
+					case Orders::ReaverAttack: order = get_order_type(Orders::ReaverFight); break;
+					default: break;
+					}
+				}
 				if (order->id == Orders::Nothing) continue;
 				if (u->subunit) {
 					if (target) subunit_order = u->subunit->unit_type->attack_unit;
