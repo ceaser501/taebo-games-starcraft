@@ -771,7 +771,7 @@ API const char* bw_selection_extra_json() {
 		int max_energy = g->unit_max_energy(u).integer_part();
 		text_out += format("{\"research\":%d,\"upgrade\":%d,\"work\":%d,\"addon\":%d,\"addonProgress\":%d,\"flying\":%d,\"cloaked\":%d,"
 			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d}",
-			research, upgrade, work, addon, addon_progress, building && g->u_flying(u) ? 1 : 0, g->u_cloaked(u) ? 1 : 0,
+			research, upgrade, work, addon, addon_progress, building && g->u_flying(u) ? 1 : 0, g->u_cloaked(u) || g->u_requires_detector(u) ? 1 : 0,
 			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0);
 	}
 	text_out += "]";
@@ -780,3 +780,22 @@ API const char* bw_selection_extra_json() {
 
 // Solo testing only: allows the original cheat actions (18: 0x10 money, 0x2 fast building).
 API void bw_enable_cheats(int on) { g->st.cheats_enabled = on != 0; }
+
+// Units of a type (-1: any) owned by a slot (-1: any) that the viewer can see, as [[id, type, x, y], ...].
+// Used by the page's tests and for jumping to things.
+API const char* bw_units_json(int owner, int type) {
+	text_out = "[";
+	bool first = true;
+	for (size_t p = 0; p != 12; ++p) {
+		if (owner >= 0 && (int)p != owner) continue;
+		for (unit_t* u : ptr(g->st.player_units[p])) {
+			if (type >= 0 && (int)u->unit_type->id != type) continue;
+			if (!g->sprite_visible_to_viewer(u->sprite)) continue;
+			if (!first) text_out += ",";
+			first = false;
+			text_out += format("[%d,%d,%d,%d]", g->get_unit_id(u).raw_value, (int)u->unit_type->id, u->sprite->position.x, u->sprite->position.y);
+		}
+	}
+	text_out += "]";
+	return text_out.c_str();
+}

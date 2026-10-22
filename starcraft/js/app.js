@@ -8,7 +8,7 @@ import { Net, netErrorText } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const TERRAN = 1;
-const DEFAULT_MAP = /crystallis/i;
+const DEFAULT_MAP = /heartbreak ridge/i; // a standard 1:1 map with gas
 const PANELS = ['menu', 'loading', 'pause', 'result', 'gate', 'lobby'];
 
 let engine = null;

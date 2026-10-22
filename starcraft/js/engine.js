@@ -154,6 +154,8 @@ export class Engine {
   syncSelection() { return this.M._bw_sync_selection(); }
   selection() { return this.json(this.M._bw_selection_json()); }
   player(slot) { return this.json(this.M._bw_player_json(slot)); }
+  units(owner = -1, type = -1) { return this.json(this.M._bw_units_json(owner, type)).map(([id, t, x, y]) => ({ id, type: t, x, y })); }
+
   unitAt(x, y) {
     const owner = this.M._bw_unit_at(x, y);
     return owner < 0 ? null : { owner };
