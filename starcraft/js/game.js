@@ -48,6 +48,42 @@ export class Game {
     this.video = Object.assign(document.createElement('video'), { muted: true, playsInline: true, preload: 'auto' });
     this.video.addEventListener('ended', () => this.portraitIdle());
     this.portraitSet = null;
+    // Sounds from the simulation; flag 0x10 means "don't restart while it still plays".
+    this.engine.onSound = (file, volume, pan, priority, flags) => this.sound.play(file, volume, pan, !!(flags & 0x10));
+    this.alerts = { base: 0, forces: 0 };
+    this.pings = [];
+  }
+
+  // ---- what the original announces: unit ready, job finished, research done, under attack, nukes ----
+
+  handleEvents() {
+    const now = performance.now();
+    for (const e of this.engine.events()) {
+      switch (e.kind) {
+        case 'ready': {
+          const t = this.engine.unitType(e.type);
+          if (t.ready) this.sound.play(this.engine.soundFile(t.ready));
+          break;
+        }
+        case 'built': this.sound.play('terran/scv/tscupd00.wav'); break;
+        case 'addon': this.sound.play('terran/advisor/tadupd03.wav'); break;
+        case 'research': this.sound.play('terran/advisor/tadupd02.wav'); break;
+        case 'upgrade': this.sound.play('terran/advisor/tadupd06.wav'); break;
+        case 'nukeready': this.sound.play('terran/advisor/tadupd07.wav'); break;
+        case 'nuke': this.notice('nuke'); break;
+        case 'attacked': {
+          // A warning and a blink on the minimap, at most every 15 s for buildings and for units each,
+          // and not for fights on screen.
+          const kind = e.building ? 'base' : 'forces';
+          const onScreen = e.x >= this.view.x && e.x < this.view.x + SCREEN.w && e.y >= this.view.y && e.y < this.view.y + SCREEN.h - 100;
+          if (onScreen || now - this.alerts[kind] < 15000) break;
+          this.alerts[kind] = now;
+          this.sound.play(e.building ? 'terran/advisor/tadupd00.wav' : 'terran/advisor/tadupd01.wav');
+          this.pings.push({ x: e.x, y: e.y, t: now, color: '#fc1010' });
+          break;
+        }
+      }
+    }
   }
 
   // ---- portrait: idle fidgets, talking when the unit answers ----
@@ -126,6 +162,7 @@ export class Game {
       steps++;
     }
     if (steps === 8) this.acc = 0;
+    if (steps) this.handleEvents();
     this.scroll(dt);
     if (now - this.lastUi > 100) { this.lastUi = now; this.updateState(); }
     this.draw(now);
@@ -242,6 +279,8 @@ export class Game {
       pressedPos: this.pressedPos,
       activeButton: this.mode?.button,
       minimap: this.map,
+      pings: (this.pings = this.pings.filter((p) => now - p.t < 3000)),
+      now,
       minimapSize: { w: this.map.width, h: this.map.height },
       viewRect: { x: this.view.x, y: this.view.y, w: SCREEN.w, h: SCREEN.h },
       messages: [
@@ -296,7 +335,11 @@ export class Game {
     this.checkEnd();
   }
 
-  notice(text) {
+  // A line in the message area: a MESSAGES key (original text and advisor voice) or plain text.
+  notice(what) {
+    const m = MESSAGES[what];
+    const text = m ? m.text ?? this.ui.meta.strings[m.str] : what;
+    if (m?.voice) this.sound.play(m.voice, 100, 0, true);
     this.messages.push({ text, t: performance.now() });
     this.messages = this.messages.slice(-4);
   }
@@ -304,9 +347,9 @@ export class Game {
   // Why something costing `cost` ({ minerals, gas, supply }, or a unit type) cannot be paid, if so.
   needResources(cost) {
     const t = typeof cost === 'number' ? this.engine.unitType(cost) : cost, p = this.playerState || this.engine.player(this.me);
-    if (p.minerals < t.minerals) return MESSAGES.minerals;
-    if (p.gas < t.gas) return MESSAGES.gas;
-    if (t.supply > 0 && p.supplyUsed + t.supply > p.supplyMax) return MESSAGES.supply;
+    if (p.minerals < t.minerals) return 'minerals';
+    if (p.gas < t.gas) return 'gas';
+    if (t.supply > 0 && p.supplyUsed + t.supply > p.supplyMax) return 'supply';
     return null;
   }
 
@@ -333,12 +376,12 @@ export class Game {
     } else if (m.kind === 'land') {
       const t = this.engine.unitType(m.type);
       const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
-      if (!this.engine.canLand(tx, ty)) { this.notice(MESSAGES.landing); this.mode = m; return; }
+      if (!this.engine.canLand(tx, ty)) { this.notice('landing'); this.mode = m; return; }
       this.send(this.engine.cmd.land(tx, ty));
     } else if (m.kind === 'build') {
       const t = this.engine.unitType(m.type);
       const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
-      if (!this.engine.canPlace(m.type, tx, ty)) { this.notice(MESSAGES.location); this.mode = m; return; }
+      if (!this.engine.canPlace(m.type, tx, ty)) { this.notice('location'); this.mode = m; return; }
       const why = this.needResources(m.type);
       if (why) { this.notice(why); return; }
       this.send(this.engine.cmd.build(m.type, tx, ty));

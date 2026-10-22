@@ -140,8 +140,12 @@ struct web_ui : ui_functions {
 	}
 
 	// Sounds go to the page with a volume (0-100) and left/right pan (-100..100).
+	bool nuke_launched = false; // for bw_events_json
+
 	virtual void play_sound(int id, xy position, const unit_t* source_unit, bool add_race_index) override {
-		if (add_race_index) id += 1;
+		// Race-specific sounds (advisor lines) follow the listener's race, as in the original.
+		if (add_race_index) id += viewer >= 0 ? std::max(0, std::min(2, (int)st.players[viewer].race)) : 1;
+		if (id >= 127 && id <= 129) nuke_launched = true;
 		if ((size_t)id >= sound_filenames.size()) return;
 		if (viewer >= 0 && source_unit && source_unit->owner != viewer && !(source_unit->sprite->visibility_flags & (1 << viewer))) return;
 		const sound_type_t* sound_type = get_sound_type((Sounds)id);
@@ -810,6 +814,65 @@ API const char* bw_units_json(int owner, int type) {
 			text_out += format("[%d,%d,%d,%d]", g->get_unit_id(u).raw_value, (int)u->unit_type->id, u->sprite->position.x, u->sprite->position.y);
 		}
 	}
+	text_out += "]";
+	return text_out.c_str();
+}
+
+// ---- Events the original announces to the local player (voices, messages, minimap blinks) ----
+// Found by comparing the viewer's units, techs and upgrades with the last check. Only the page
+// reacts to them; the game itself is unchanged, so this does not affect lockstep.
+struct seen_unit { int life; bool completed; bool addon_done; bool nuke_ready; int type; };
+static std::unordered_map<uint32_t, seen_unit> seen_units;
+static std::array<bool, 64> seen_tech{};
+static std::array<int, 64> seen_upgrades{};
+static int events_frame = -1;
+
+API const char* bw_events_json() {
+	text_out = "[";
+	bool first = true;
+	auto add = [&](const char* kind, const unit_t* u) {
+		if (!first) text_out += ",";
+		first = false;
+		text_out += format("{\"kind\":\"%s\",\"type\":%d,\"x\":%d,\"y\":%d,\"building\":%d}", kind, u ? (int)u->unit_type->id : -1,
+			u ? u->sprite->position.x : 0, u ? u->sprite->position.y : 0, u && g->ut_building(u) ? 1 : 0);
+	};
+	int me = g->viewer;
+	bool fresh = events_frame < 0 || g->st.current_frame < events_frame;
+	events_frame = g->st.current_frame;
+	if (me < 0) { text_out += "]"; return text_out.c_str(); }
+	if (fresh) { seen_units.clear(); }
+	std::unordered_map<uint32_t, seen_unit> now;
+	for (unit_t* u : ptr(g->st.player_units[me])) {
+		uint32_t id = g->get_unit_id(u).raw_value;
+		seen_unit s{(u->hp + u->shield_points).raw_value, g->u_completed(u), false, false, (int)u->unit_type->id};
+		if (g->ut_building(u) && u->building.addon && g->u_completed(u->building.addon)) s.addon_done = true;
+		if (g->unit_is(u, UnitTypes::Terran_Nuclear_Silo) && u->building.silo.nuke && g->u_completed(u->building.silo.nuke)) s.nuke_ready = true;
+		now[id] = s;
+		auto i = seen_units.find(id);
+		if (fresh) continue;
+		if (i == seen_units.end()) {
+			// A new unit: trained units arrive complete; buildings start incomplete.
+			if (s.completed && !g->ut_building(u)) add("ready", u);
+			continue;
+		}
+		const seen_unit& o = i->second;
+		if (s.type != o.type) continue; // morphed (siege mode and the like)
+		if (s.completed && !o.completed) add(g->ut_addon(u) ? "addon" : g->ut_building(u) ? "built" : "ready", u);
+		if (s.nuke_ready && !o.nuke_ready) add("nukeready", u);
+		if (s.life < o.life && s.completed) add("attacked", u);
+	}
+	for (size_t t = 0; t != seen_tech.size() && t < (size_t)TechTypes::None; ++t) {
+		bool done = g->player_has_researched(me, (TechTypes)t);
+		if (!fresh && done && !seen_tech[t] && g->player_tech_available(me, (TechTypes)t) && g->get_tech_type((TechTypes)t)->mineral_cost) add("research", nullptr);
+		seen_tech[t] = done;
+	}
+	for (size_t t = 0; t != seen_upgrades.size() && t < (size_t)UpgradeTypes::None; ++t) {
+		int level = g->player_upgrade_level(me, (UpgradeTypes)t);
+		if (!fresh && level > seen_upgrades[t]) add("upgrade", nullptr);
+		seen_upgrades[t] = level;
+	}
+	seen_units.swap(now);
+	if (g->nuke_launched) { g->nuke_launched = false; add("nuke", nullptr); }
 	text_out += "]";
 	return text_out.c_str();
 }

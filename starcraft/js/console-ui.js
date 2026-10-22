@@ -89,24 +89,39 @@ export class ConsoleUI {
     return this.tinted.get(key);
   }
 
+  // Text uses the original colour codes: \x01/\x02 pale blue, \x03 yellow, \x04 white, \x05 grey,
+  // \x06 red, \x07 green; \n starts a new line.
   textWidth(text, font = 'font10') {
     const f = this.meta.fonts[font];
-    let w = 0;
-    for (const ch of text) w += f.glyphs[ch.charCodeAt(0)]?.[1] ?? 3;
-    return w;
+    let w = 0, max = 0;
+    for (const ch of text) {
+      const c = ch.charCodeAt(0);
+      if (c === 10) { max = Math.max(max, w); w = 0; continue; }
+      if (c < 32) continue;
+      w += f.glyphs[c]?.[1] ?? 3;
+    }
+    return Math.max(max, w);
   }
 
   text(ctx, text, x, y, color = COLOR.blue, font = 'font10', align = 'left') {
     const f = this.meta.fonts[font];
     const img = this.images[f.file];
-    if (align === 'center') x -= Math.round(this.textWidth(text, font) / 2);
-    else if (align === 'right') x -= this.textWidth(text, font);
-    for (const ch of text) {
-      const g = f.glyphs[ch.charCodeAt(0)];
-      if (!g) { x += 3; continue; }
-      ctx.drawImage(img, g[0], color * f.height, g[1], f.height, x, y, g[1], f.height);
-      x += g[1];
-    }
+    const CODES = { 1: COLOR.blue, 2: COLOR.blue, 3: COLOR.yellow, 4: COLOR.white, 5: COLOR.grey, 6: COLOR.red, 7: COLOR.green };
+    const base = color;
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      let lx = x;
+      if (align === 'center') lx -= Math.round(this.textWidth(line, font) / 2);
+      else if (align === 'right') lx -= this.textWidth(line, font);
+      for (const ch of line) {
+        const c = ch.charCodeAt(0);
+        if (c < 32) { color = c === 1 ? base : CODES[c] ?? color; continue; }
+        const g = f.glyphs[c];
+        if (!g) { lx += 3; continue; }
+        ctx.drawImage(img, g[0], color * f.height, g[1], f.height, lx, y + i * (f.height - 1), g[1], f.height);
+        lx += g[1];
+      }
+    });
   }
 
   // Wireframe: four body sections coloured by health, like the original's damage display.
@@ -152,6 +167,13 @@ export class ConsoleUI {
     ctx.lineWidth = 1;
     ctx.strokeRect(Math.round(ox + v.x / 32 * scale) + 0.5, Math.round(oy + v.y / 32 * scale) + 0.5, Math.round(v.w / 32 * scale), Math.round(v.h / 32 * scale));
     this.minimapRect = { x: ox, y: oy, w: dw, h: dh, scale };
+    // Blinking squares where something happened (attacks, pings).
+    for (const p of s.pings || []) {
+      if (Math.floor((s.now - p.t) / 150) % 2) continue;
+      const px = Math.round(ox + p.x / 32 * scale), py = Math.round(oy + p.y / 32 * scale);
+      ctx.strokeStyle = p.color;
+      ctx.strokeRect(px - 4.5, py - 4.5, 9, 9);
+    }
   }
 
   drawStatus(ctx, s) {
@@ -278,8 +300,9 @@ export class ConsoleUI {
       if (c.supply) cost.push([4 + s.raceIndex, c.supply]);
       if (c.energy) cost.push([7 + s.raceIndex, c.energy]);
       const costW = cost.reduce((w, [, n]) => w + 20 + this.textWidth(String(n)), 0);
+      const lines = hover.tip.split('\n').length;
       const w = Math.max(this.textWidth(hover.tip), costW) + 10;
-      const h = cost.length ? 32 : 16;
+      const h = lines * 12 + 4 + (cost.length ? 16 : 0);
       const x = Math.max(2, Math.min(SCREEN.w - w - 2, CARD.x + 62 - w / 2)), y = CARD.y - h - 6;
       ctx.fillStyle = 'rgba(0,0,0,0.8)';
       ctx.fillRect(x, y, w, h);
@@ -288,8 +311,8 @@ export class ConsoleUI {
       this.text(ctx, hover.tip, x + 5, y + 2, COLOR.white);
       let cx = x + 5;
       for (const [icon, n] of cost) {
-        this.frame(ctx, 'icons', icon, cx, y + 16);
-        this.text(ctx, String(n), cx + 18, y + 17, COLOR.white);
+        this.frame(ctx, 'icons', icon, cx, y + h - 17);
+        this.text(ctx, String(n), cx + 18, y + h - 16, COLOR.white);
         cx += 20 + this.textWidth(String(n));
       }
     }

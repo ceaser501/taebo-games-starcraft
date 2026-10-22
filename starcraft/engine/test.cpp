@@ -74,6 +74,7 @@ extern "C" int bw_icon_h();
 extern "C" int bw_icon_count(int);
 extern "C" const char* bw_unit_type_json(int);
 extern "C" const char* bw_tech_json(int);
+extern "C" const char* bw_sound_file(int);
 void dump_icons();
 static void act(int slot, size_t n) { if (n) bw_action(slot, bw_out(), n); }
 
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
 	save(std::string(argv[3]) + "-mini.rgba", bw_render_minimap(), bw_map_tile_width(), bw_map_tile_height());
 	dump_icons();
 	for (int t : {0, 1, 3, 5, 9, 10, 24}) printf("tech %d %s\n", t, bw_tech_json(t));
+	for (int t : {126, 127, 128, 129, 130}) printf("sound %d %s\n", t, bw_sound_file(t));
 	return 0;
 }
 void dump_icons() {

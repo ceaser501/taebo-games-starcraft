@@ -69,6 +69,8 @@ export class Engine {
     this.unitTypes = new Map();
     this.icons = new Map();
     this.M.onFatal = (text) => { this.fatal = text; };
+    // Sounds the simulation plays (weapons, deaths, the nuke warning...), with volume and pan.
+    this.M.onSound = (file, volume, pan, priority, flags) => this.onSound?.(file, volume, pan, priority, flags);
   }
 
   // Copies bytes into the engine heap; data handed to bw_add_data must stay there for good.
@@ -181,6 +183,9 @@ export class Engine {
     const extra = this.json(this.M._bw_selection_extra_json());
     return sel.map((u, i) => ({ ...u, ...extra[i] }));
   }
+
+  // What happened for the local player since the last call (see bw_events_json).
+  events() { return this.json(this.M._bw_events_json()); }
 
   soundFile(id) { return this.text(this.M._bw_sound_file(id)); }
 
