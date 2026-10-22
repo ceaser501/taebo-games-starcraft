@@ -66,7 +66,7 @@ async function init() {
 
 // Loads the map and starts a game. `me` is this player's index; `makeLockstep` builds the
 // command channel once the game slots are known.
-async function launch({ file, seed, players, me, makeLockstep }) {
+async function launch({ file, seed, players, me, cheats = false, makeLockstep }) {
   sound.unlock();
   showOnly('loading');
   progress(`${mapName(file)} 불러오는 중…`);
@@ -74,7 +74,7 @@ async function launch({ file, seed, players, me, makeLockstep }) {
   const mySlot = slots[me];
   engine.setViewer(mySlot);
   $('loading').hidden = true;
-  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
+  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, cheats, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
   game.start();
   if (params.has('debug')) window.sc = { engine, game, online };
 }
@@ -85,7 +85,7 @@ async function startSolo() {
   // ?seed=N replays the same start (positions, random rolls), for testing.
   const seed = Number(params.get('seed')) || (Math.random() * 2 ** 32) >>> 0;
   try {
-    await launch({ file, seed, players: [0, 1], me: 0, makeLockstep: (slots, mySlot) => new SoloLockstep(mySlot) });
+    await launch({ file, seed, players: [0, 1], me: 0, cheats: true, makeLockstep: (slots, mySlot) => new SoloLockstep(mySlot) });
   } catch (err) {
     showOnly('menu');
     $('notice').textContent = err.message;

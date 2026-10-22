@@ -20,8 +20,8 @@ export class SoloLockstep {
 }
 
 export class Game {
-  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, onEnd }) {
-    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, onEnd });
+  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, cheats = false, onEnd }) {
+    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, cheats, onEnd });
     this.canvas = document.getElementById('view');
     this.canvas.width = SCREEN.w;
     this.canvas.height = SCREEN.h;
@@ -465,6 +465,15 @@ export class Game {
       return;
     }
     if (!down) return;
+    // Solo testing: F9 gives 10000 minerals and gas and turns on fast building (the original's
+    // "show me the money" and "operation cwal"). F9 has no other use in the original.
+    if (e.code === 'F9' && this.cheats) {
+      e.preventDefault();
+      this.engine.M._bw_enable_cheats(1);
+      this.send(Uint8Array.of(18, 0x12, 0, 0, 0));
+      this.notice('Cheat enabled.');
+      return;
+    }
     if (e.code === 'Escape') {
       if (this.mode) { this.mode = null; return; }
       const b = this.buttons.find((x) => x.key === 'Esc');

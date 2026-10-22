@@ -66,8 +66,8 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 버튼이 켜지는지는 엔진의 원작 판정(`unit_can_build`, `unit_can_research`, `unit_can_use_tech` 등)을 그대로 씁니다.
 상태창에는 연구·업그레이드·애드온 진행, 탑승 유닛(누르면 내림), 처치 수, 에너지, 방어·무기 업그레이드 아이콘이 나옵니다.
 
-혼자 테스트에서 개발자 도구로 `?debug`를 붙여 열면 `window.sc`로 엔진에 접근할 수 있고,
-`sc.engine.M._bw_enable_cheats(1); sc.game.send(Uint8Array.of(18, 0x12, 0, 0, 0))`로 원작 치트(돈, 빠른 건설)를 켤 수 있습니다.
+혼자 테스트에서는 **F9**로 원작 치트(show me the money + operation cwal: 미네랄·가스 10000, 빠른 건설)를 켭니다.
+온라인 대전에서는 동작하지 않습니다. 주소에 `?debug`를 붙이면 개발자 도구에서 `window.sc`로 엔진에 접근할 수 있습니다.
 
 ## 조작
 
@@ -81,6 +81,7 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 | 명령 단축키 | 원작과 같음 (M 이동, S 정지, A 공격, P 정찰, H 위치 사수, G 채취, C 반납, B 건설) |
 | Esc | 명령·건설 취소, 생산 취소 |
 | F10 | 메뉴 |
+| F9 | 치트 (혼자 테스트만): 미네랄·가스 10000, 빠른 건설 |
 
 ## 구조
 
