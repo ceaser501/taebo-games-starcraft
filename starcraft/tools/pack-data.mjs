@@ -168,6 +168,37 @@ for (let i = 0; i < 228; i++) {
   const o = tbl.readUInt16LE(2 + i * 2);
   ui.names.push(tbl.toString('latin1', o, tbl.indexOf(0, o)));
 }
+// All stat_txt strings too: tech and upgrade names are looked up by their label number.
+const count = tbl.readUInt16LE(0);
+ui.strings = [];
+for (let i = 0; i < count; i++) {
+  const o = tbl.readUInt16LE(2 + i * 2);
+  ui.strings.push(tbl.toString('latin1', o, tbl.indexOf(0, o)));
+}
+
+// Portraits: Remastered SD keeps them as WebM clips, e.g. portrait/tmarine/tmafid00.webm (idle
+// fidgets) and tmatlk00.webm (talking). portdata.dat gives each portrait's idle and talking names.
+const portraitDir = sd('portrait');
+ui.portraits = [];
+if (fs.existsSync(portraitDir)) {
+  const ptbl = fs.readFileSync(path.join(src, 'arr', 'portdata.tbl'));
+  const pstr = (i) => { const o = ptbl.readUInt16LE(2 + (i - 1) * 2); return ptbl.toString('latin1', o, ptbl.indexOf(0, o)); };
+  const pdat = fs.readFileSync(path.join(src, 'arr', 'portdata.dat'));
+  const count = pdat.length / 12;
+  const clips = (index) => {
+    if (!index) return [];
+    const [folder, stem] = pstr(index).toLowerCase().split('\\');
+    const dir = path.join(portraitDir, folder);
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).filter((f) => f.startsWith(stem) && f.endsWith('.webm')).sort().map((f) => `${folder}/${f}`);
+  };
+  for (let i = 0; i < count; i++) ui.portraits.push({ idle: clips(pdat.readUInt32LE(i * 4)), talk: clips(pdat.readUInt32LE((count + i) * 4)) });
+  for (const rel of walk(portraitDir)) {
+    const dst = path.join(out, 'portrait', rel.toLowerCase());
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(path.join(portraitDir, rel), dst);
+  }
+}
 fs.writeFileSync(path.join(uiDir, 'ui.json'), JSON.stringify(ui));
 
 console.log(`${files.length} files in ${sizes.join(', ')} (${(total / 1e6).toFixed(1)} MB), ${sounds} sounds, ${maps.length} maps -> ${out}`);

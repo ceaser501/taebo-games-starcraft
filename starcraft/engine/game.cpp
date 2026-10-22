@@ -463,6 +463,9 @@ API size_t bw_cmd_right_click(int x, int y, int queue) {
 API size_t bw_cmd_order(int order, int x, int y, int queue) {
 	unit_t* target = g->select_get_unit_at({x, y});
 	if (target && !g->sprite_visible_to_viewer(target->sprite)) target = nullptr;
+	// Orders aimed at the ground ignore the unit under the cursor; a rally point on a unit follows it.
+	if (order == (int)Orders::PlaceMine || order == (int)Orders::CastScannerSweep || order == (int)Orders::NukePaint) target = nullptr;
+	if (order == (int)Orders::RallyPointTile && target) order = (int)Orders::RallyPointUnit;
 	out.assign({21});
 	put16(x);
 	put16(y);
@@ -614,3 +617,166 @@ API int bw_unit_at(int x, int y) {
 	if (!u || !g->sprite_visible_to_viewer(u->sprite)) return -1;
 	return u->owner;
 }
+
+// ---- Stage 3: everything the Terran command card needs ----
+
+// Whether any selected unit of the viewer could do something, by the game's own rules
+// (requirements, resources aside): kind 0 build/train a unit type, 1 research a tech,
+// 2 upgrade, 3 use a tech (spells, stim, siege...), 4 receive an order.
+API int bw_can(int kind, int id) {
+	if (g->viewer < 0) return 0;
+	for (auto uid : g->current_selection) {
+		unit_t* u = g->get_unit(uid);
+		if (!own_unit(u)) continue;
+		bool ok = false;
+		switch (kind) {
+		case 0: ok = g->unit_can_build(u, g->get_unit_type((UnitTypes)id)); break;
+		case 1: ok = g->unit_can_research(u, g->get_tech_type((TechTypes)id)); break;
+		case 2: ok = g->unit_can_upgrade(u, g->get_upgrade_type((UpgradeTypes)id)); break;
+		case 3: ok = g->unit_can_use_tech(u, g->get_tech_type((TechTypes)id)); break;
+		case 4: ok = g->unit_can_receive_order(u, g->get_order_type((Orders)id), u->owner); break;
+		}
+		if (ok) return 1;
+	}
+	return 0;
+}
+
+// Tech state for a player: 0 not researched, 1 researching, 2 researched.
+API int bw_tech_state(int slot, int tech) {
+	if (g->player_has_researched(slot, (TechTypes)tech)) return 2;
+	return g->player_is_researching(slot, (TechTypes)tech) ? 1 : 0;
+}
+// Upgrade level, plus 100 while the next level is being upgraded; bw_upgrade_max for the cap.
+API int bw_upgrade_state(int slot, int upgrade) {
+	return g->player_upgrade_level(slot, (UpgradeTypes)upgrade) + (g->player_is_upgrading(slot, (UpgradeTypes)upgrade) ? 100 : 0);
+}
+API int bw_upgrade_max(int slot, int upgrade) { return g->player_max_upgrade_level(slot, (UpgradeTypes)upgrade); }
+
+// Costs, icon and name (stat_txt string number, 1-based) of a tech or an upgrade's next level.
+API const char* bw_tech_json(int id) {
+	auto* t = g->get_tech_type((TechTypes)id);
+	text_out = format("{\"minerals\":%d,\"gas\":%d,\"time\":%d,\"energy\":%d,\"icon\":%d,\"label\":%d}",
+		t->mineral_cost, t->gas_cost, t->research_time, t->energy_cost, t->icon, t->label);
+	return text_out.c_str();
+}
+API const char* bw_upgrade_json(int id, int slot) {
+	auto* t = g->get_upgrade_type((UpgradeTypes)id);
+	int level = g->player_upgrade_level(slot, (UpgradeTypes)id);
+	text_out = format("{\"minerals\":%d,\"gas\":%d,\"time\":%d,\"icon\":%d,\"label\":%d,\"level\":%d,\"max\":%d}",
+		t->mineral_cost_base + t->mineral_cost_factor * level, t->gas_cost_base + t->gas_cost_factor * level,
+		t->time_cost_base + t->time_cost_factor * level, t->icon, t->label, level, g->player_max_upgrade_level(slot, (UpgradeTypes)id));
+	return text_out.c_str();
+}
+
+// Command bytes for the rest of the Terran card.
+API size_t bw_cmd_research(int tech) { return write_out({48, tech}); }
+API size_t bw_cmd_upgrade(int upgrade) { return write_out({50, upgrade}); }
+API size_t bw_cmd_cancel_research() { return write_out({49}); }
+API size_t bw_cmd_cancel_upgrade() { return write_out({51}); }
+API size_t bw_cmd_cancel_addon() { return write_out({52}); }
+API size_t bw_cmd_cancel_nuke() { return write_out({46}); }
+API size_t bw_cmd_stim() { return write_out({54}); }
+API size_t bw_cmd_cloak() { return write_out({33, 0}); }
+API size_t bw_cmd_decloak() { return write_out({34, 0}); }
+API size_t bw_cmd_siege() { return write_out({38, 0}); }
+API size_t bw_cmd_unsiege() { return write_out({37, 0}); }
+API size_t bw_cmd_unload_all() { return write_out({40, 0}); }
+API size_t bw_cmd_unload(int uid) { out.assign({41}); put16(uid); return out.size(); }
+// Lifting off: the building rises where it stands.
+API size_t bw_cmd_liftoff() {
+	if (g->current_selection.empty()) return 0;
+	unit_t* u = g->get_unit(g->current_selection.front());
+	if (!own_unit(u)) return 0;
+	out.assign({47});
+	put16(u->sprite->position.x);
+	put16(u->sprite->position.y);
+	return out.size();
+}
+// Landing the selected flying building with its top-left on tile (tx, ty).
+API size_t bw_cmd_land(int tx, int ty) {
+	if (g->current_selection.empty()) return 0;
+	unit_t* u = g->get_unit(g->current_selection.front());
+	if (!own_unit(u)) return 0;
+	out.assign({12, (uint8_t)Orders::BuildingLand});
+	put16(tx);
+	put16(ty);
+	put16((int)u->unit_type->id);
+	return out.size();
+}
+// An add-on goes next to the selected building, where the game expects it.
+API size_t bw_cmd_addon(int addon_type) {
+	if (g->current_selection.empty()) return 0;
+	unit_t* u = g->get_unit(g->current_selection.front());
+	if (!own_unit(u)) return 0;
+	const unit_type_t* addon = g->get_unit_type((UnitTypes)addon_type);
+	xy builder_pos = u->sprite->position;
+	int tx = (builder_pos.x - u->unit_type->placement_size.x / 2 + addon->addon_position.x / 32 * 32) / 32;
+	int ty = (builder_pos.y - u->unit_type->placement_size.y / 2 + addon->addon_position.y / 32 * 32) / 32;
+	out.assign({12, (uint8_t)Orders::PlaceAddon});
+	put16(tx);
+	put16(ty);
+	put16(addon_type);
+	return out.size();
+}
+
+// Whether the selected flying building could land with its top-left on tile (tx, ty).
+API int bw_can_land(int tx, int ty) {
+	if (g->current_selection.size() != 1) return 0;
+	unit_t* u = g->get_unit(g->current_selection.front());
+	if (!own_unit(u)) return 0;
+	xy pos(tx * 32 + u->unit_type->placement_size.x / 2, ty * 32 + u->unit_type->placement_size.y / 2);
+	return g->can_place_building(u, u->owner, u->unit_type, pos, true, true) ? 1 : 0;
+}
+
+// More about the selected units for the status panel, as JSON per unit (same order as
+// bw_selection_json): research/upgrade in progress, add-on, flying, cloaked, passengers, kills.
+API const char* bw_selection_extra_json() {
+	text_out = "[";
+	bool first = true;
+	for (auto uid : g->current_selection) {
+		unit_t* u = g->get_unit(uid);
+		if (!u || g->unit_dead(u)) continue;
+		if (!first) text_out += ",";
+		first = false;
+		int research = -1, upgrade = -1, work = -1, addon = -1, addon_progress = -1, nuke = 0;
+		bool building = g->ut_building(u);
+		if (building) {
+			if (u->building.researching_type) {
+				research = (int)u->building.researching_type->id;
+				work = 100 - u->building.upgrade_research_time * 100 / std::max(1, u->building.researching_type->research_time);
+			}
+			if (u->building.upgrading_type) {
+				auto* t = u->building.upgrading_type;
+				upgrade = (int)t->id;
+				int total = t->time_cost_base + t->time_cost_factor * (u->building.upgrading_level - 1);
+				work = 100 - u->building.upgrade_research_time * 100 / std::max(1, total);
+			}
+			if (u->building.addon) addon = (int)u->building.addon->unit_type->id;
+			if (g->unit_is_building_addon(u) && u->current_build_unit) {
+				addon = (int)u->current_build_unit->unit_type->id;
+				addon_progress = 100 - u->current_build_unit->remaining_build_time * 100 / std::max(1, u->current_build_unit->unit_type->build_time);
+			}
+			if (g->unit_is(u, UnitTypes::Terran_Nuclear_Silo) && u->building.silo.nuke) nuke = g->u_completed(u->building.silo.nuke) ? 2 : 1;
+		}
+		a_string loaded = "[";
+		bool lf = true;
+		for (auto lid : u->loaded_units) {
+			unit_t* p = g->get_unit(lid);
+			if (!p) continue;
+			if (!lf) loaded += ",";
+			lf = false;
+			loaded += format("[%d,%d,%d,%d]", lid.raw_value, (int)p->unit_type->id, p->hp.integer_part(), p->unit_type->hitpoints.integer_part());
+		}
+		loaded += "]";
+		int max_energy = g->unit_max_energy(u).integer_part();
+		text_out += format("{\"research\":%d,\"upgrade\":%d,\"work\":%d,\"addon\":%d,\"addonProgress\":%d,\"flying\":%d,\"cloaked\":%d,"
+			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d}",
+			research, upgrade, work, addon, addon_progress, building && g->u_flying(u) ? 1 : 0, g->u_cloaked(u) ? 1 : 0,
+			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0);
+	}
+	text_out += "]";
+	return text_out.c_str();
+}
+
+// Solo testing only: allows the original cheat actions (18: 0x10 money, 0x2 fast building).
+API void bw_enable_cheats(int on) { g->st.cheats_enabled = on != 0; }

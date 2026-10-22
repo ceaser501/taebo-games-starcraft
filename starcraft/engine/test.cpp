@@ -73,6 +73,7 @@ extern "C" int bw_icon_w();
 extern "C" int bw_icon_h();
 extern "C" int bw_icon_count(int);
 extern "C" const char* bw_unit_type_json(int);
+extern "C" const char* bw_tech_json(int);
 void dump_icons();
 static void act(int slot, size_t n) { if (n) bw_action(slot, bw_out(), n); }
 
@@ -114,17 +115,19 @@ int main(int argc, char** argv) {
 	save(std::string(argv[3]) + "-1.rgba", bw_render(vw, vh, vx, vy), vw, vh);
 	save(std::string(argv[3]) + "-mini.rgba", bw_render_minimap(), bw_map_tile_width(), bw_map_tile_height());
 	dump_icons();
+	for (int t : {0, 1, 3, 5, 9, 10, 24}) printf("tech %d %s\n", t, bw_tech_json(t));
 	return 0;
 }
 void dump_icons() {
 	{
 		// A sheet of the first 64 command icons, to check colours.
-		int n = 64, cols = 16;
+		int n = 48, cols = 12;
 		bw_icon(0, 0, 0);
 		int w = bw_icon_w(), h = bw_icon_h();
 		std::vector<uint8_t> sheet((size_t)cols * w * (n / cols) * h * 4, 0);
 		for (int i = 0; i != n; ++i) {
-			const uint8_t* p = bw_icon(0, i + 224, 0);
+			static const int pick[] = {235,237,238,239,240,241,242,243,244,245,246,247,256,257,258,259,260,261,262,263,276,277,278,279,280,281,282,283,284,285,286,287,300,301,302,303,304,305,306,307,308,309,310,311,312,313,314,315,232};
+			const uint8_t* p = bw_icon(0, pick[i], 0);
 			for (int y = 0; y != h; ++y) memcpy(&sheet[(((i / cols) * h + y) * cols * w + (i % cols) * w) * 4], p + y * w * 4, w * 4);
 		}
 		save("icons.rgba", sheet.data(), cols * w, (n / cols) * h);

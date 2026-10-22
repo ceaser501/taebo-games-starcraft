@@ -166,6 +166,20 @@ export class Engine {
     return this.unitTypes.get(id);
   }
 
+  can(kind, id) { return !!this.M._bw_can({ build: 0, research: 1, upgrade: 2, tech: 3, order: 4 }[kind], id); }
+  techState(slot, tech) { return this.M._bw_tech_state(slot, tech); }
+  upgradeState(slot, upgrade) { const v = this.M._bw_upgrade_state(slot, upgrade); return { level: v % 100, upgrading: v >= 100, max: this.M._bw_upgrade_max(slot, upgrade) }; }
+  tech(id) { return this.json(this.M._bw_tech_json(id)); }
+  upgrade(id, slot) { return this.json(this.M._bw_upgrade_json(id, slot)); }
+  canLand(tx, ty) { return !!this.M._bw_can_land(tx, ty); }
+
+  // Selection with the extra details merged in.
+  selectionFull() {
+    const sel = this.selection();
+    const extra = this.json(this.M._bw_selection_extra_json());
+    return sel.map((u, i) => ({ ...u, ...extra[i] }));
+  }
+
   soundFile(id) { return this.text(this.M._bw_sound_file(id)); }
 
   // A command card icon as a canvas, cached per frame and colour row (0 normal, 1 disabled, 2 lit).
@@ -198,5 +212,21 @@ export class Engine {
     cancelConstruction: () => this.bytes(this.M._bw_cmd_cancel_construction()),
     build: (type, tx, ty) => this.bytes(this.M._bw_cmd_build(type, tx, ty)),
     group: (sub, n) => this.bytes(this.M._bw_cmd_group(sub, n)),
+    research: (tech) => this.bytes(this.M._bw_cmd_research(tech)),
+    upgrade: (upgrade) => this.bytes(this.M._bw_cmd_upgrade(upgrade)),
+    cancelResearch: () => this.bytes(this.M._bw_cmd_cancel_research()),
+    cancelUpgrade: () => this.bytes(this.M._bw_cmd_cancel_upgrade()),
+    cancelAddon: () => this.bytes(this.M._bw_cmd_cancel_addon()),
+    cancelNuke: () => this.bytes(this.M._bw_cmd_cancel_nuke()),
+    stim: () => this.bytes(this.M._bw_cmd_stim()),
+    cloak: () => this.bytes(this.M._bw_cmd_cloak()),
+    decloak: () => this.bytes(this.M._bw_cmd_decloak()),
+    siege: () => this.bytes(this.M._bw_cmd_siege()),
+    unsiege: () => this.bytes(this.M._bw_cmd_unsiege()),
+    unloadAll: () => this.bytes(this.M._bw_cmd_unload_all()),
+    unload: (uid) => this.bytes(this.M._bw_cmd_unload(uid)),
+    liftoff: () => this.bytes(this.M._bw_cmd_liftoff()),
+    land: (tx, ty) => this.bytes(this.M._bw_cmd_land(tx, ty)),
+    addon: (type) => this.bytes(this.M._bw_cmd_addon(type)),
   };
 }

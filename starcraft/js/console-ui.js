@@ -9,6 +9,7 @@ export const CONSOLE_Y = 292;
 export const MINIMAP = { x: 6, y: 348, w: 128, h: 128 };
 const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
 const STATUS = { x: 154, y: 387, w: 250, h: 90 };
+export const PORTRAIT = { x: 413, y: 410, w: 60, h: 56 };
 // Text colours as the fonts were baked (tfontgam.pcx order).
 export const COLOR = { blue: 0, yellow: 1, white: 2, grey: 3, red: 4, green: 5 };
 const HP_COLORS = ['#18fc10', '#fcfc38', '#fc1010'];
@@ -125,6 +126,7 @@ export class ConsoleUI {
     const art = this.meta.console[this.race];
     ctx.drawImage(this.images[art.console.file], 0, CONSOLE_Y);
     this.drawMinimap(ctx, s);
+    this.drawPortrait(ctx, s.portrait);
     this.drawStatus(ctx, s);
     this.drawCard(ctx, s);
     this.drawResources(ctx, s);
@@ -175,19 +177,31 @@ export class ConsoleUI {
     const ratio = u.maxHp ? u.hp / u.maxHp : 1;
     const hpColor = ratio > 0.66 ? COLOR.green : ratio > 0.33 ? COLOR.yellow : COLOR.red;
     if (u.maxHp > 0) this.text(ctx, `${u.hp}/${u.maxHp}`, STATUS.x + 40, STATUS.y + 70, hpColor, 'font8', 'center');
-    if (u.energy >= 0 && u.completed && !u.building) this.text(ctx, `${u.energy}/200`, STATUS.x + 40, STATUS.y + 80, COLOR.blue, 'font8', 'center');
     this.text(ctx, name, STATUS.x + 160, STATUS.y + 6, COLOR.white, 'font10', 'center');
 
     const mine = u.owner === s.me;
-    if (u.progress >= 0 && mine) {
-      // Construction or training: the queue of five slots and the progress bar.
+    const bar = this.meta.console.progress;
+    const progressBar = (pct, y) => {
+      const bx = STATUS.x + 106;
+      ctx.drawImage(this.images[bar.empty.file], bx, y);
+      const fw = Math.round(bar.full.w * pct / 100);
+      if (fw > 0) ctx.drawImage(this.images[bar.full.file], 0, 0, fw, bar.full.h, bx, y - 1, fw, bar.full.h);
+    };
+    // One slot with an icon and a bar: research, upgrade, add-on under construction.
+    const work = (label, icon, pct) => {
+      this.text(ctx, label, STATUS.x + 160, STATUS.y + 22, COLOR.blue, 'font10', 'center');
+      this.frame(ctx, `cmdbtns-${this.race}`, 2, STATUS.x + 64, STATUS.y + 38);
+      s.drawIcon(ctx, icon, STATUS.x + 65, STATUS.y + 39, 0, 34, 32);
+      progressBar(pct, STATUS.y + 50);
+    };
+    this.passengerRects = [];
+    if (mine && u.research >= 0) work('Researching', s.techIcon(u.research), u.work);
+    else if (mine && u.upgrade >= 0) work('Upgrading', s.upgradeIcon(u.upgrade), u.work);
+    else if (mine && u.addonProgress >= 0) work('Adding On', u.addon, u.addonProgress);
+    else if (u.progress >= 0 && mine) {
       const training = u.completed;
       if (!training) this.text(ctx, u.building ? 'Under Construction' : 'Morphing', STATUS.x + 160, STATUS.y + 24, COLOR.blue, 'font10', 'center');
-      const bar = this.meta.console.progress;
-      const bx = STATUS.x + 106, by = training ? STATUS.y + 30 : STATUS.y + 44;
-      ctx.drawImage(this.images[bar.empty.file], bx, by);
-      const fw = Math.round(bar.full.w * u.progress / 100);
-      if (fw > 0) ctx.drawImage(this.images[bar.full.file], 0, 0, fw, bar.full.h, bx, by - 1, fw, bar.full.h);
+      progressBar(u.progress, training ? STATUS.y + 30 : STATUS.y + 44);
       if (training) {
         // Five queue slots; the first (in production) has the arrow pointing at the rest.
         for (let i = 0; i < 5; i++) {
@@ -197,9 +211,30 @@ export class ConsoleUI {
           if (type != null) s.drawIcon(ctx, type, x + 1, y + 1, 0, 34, 32);
         }
       }
+    } else if (u.loaded?.length) {
+      // Passengers: small wireframes in boxes; clicking one unloads it.
+      u.loaded.forEach(([uid, type, hp, maxHp], i) => {
+        const x = STATUS.x + 80 + (i % 4) * 38, y = STATUS.y + 22 + Math.floor(i / 4) * 34;
+        this.frame(ctx, `cmdbtns-${this.race}`, 13, x, y);
+        this.wireframe(ctx, 'grpwire', type, x + 2, y + 2, 32, hp, maxHp);
+        if (mine) this.passengerRects.push({ x, y, w: 36, h: 34, uid });
+      });
+    } else if (u.nuke && mine) {
+      this.text(ctx, u.nuke === 2 ? 'Nuke Ready' : 'Arming Nuke', STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
     } else if (!u.building && mine) {
-      this.text(ctx, 'Kills: 0', STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
+      this.text(ctx, `Kills: ${u.kills ?? 0}`, STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
     }
+    if (u.energy >= 0 && u.maxEnergy > 0 && u.completed) this.text(ctx, `${u.energy}/${u.maxEnergy}`, STATUS.x + 40, STATUS.y + 80, COLOR.blue, 'font8', 'center');
+  }
+
+  passengerAt(x, y) {
+    return this.passengerRects?.find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)?.uid ?? null;
+  }
+
+  // The talking head: the current clip's frame inside the console's portrait window.
+  drawPortrait(ctx, video) {
+    if (video && video.readyState >= 2) ctx.drawImage(video, PORTRAIT.x, PORTRAIT.y, PORTRAIT.w, PORTRAIT.h);
+    ctx.drawImage(this.images[this.meta.console[this.race].portrait.file], PORTRAIT.x, PORTRAIT.y);
   }
 
   // Command buttons: the original button frame with the icon on it, pressed ones shifted.
@@ -224,17 +259,30 @@ export class ConsoleUI {
       const lit = s.hoverPos === b.pos || s.activeButton === b.id;
       s.drawIcon(ctx, b.icon, r.x + (pressed ? 1 : 0), r.y + (pressed ? 1 : 0), enabled ? (lit ? 2 : 0) : 1);
     }
-    // Tooltip above the card, like the original.
+    // Tooltip above the card: the button text, then its cost with the resource icons.
     const hover = s.buttons.find((b) => b.pos === s.hoverPos);
     if (hover) {
-      const text = hover.tip;
-      const w = this.textWidth(text) + 8;
-      const x = Math.min(SCREEN.w - w - 2, CARD.x + 60 - w / 2), y = CARD.y - 22;
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.fillRect(x, y, w, 15);
-      ctx.strokeStyle = '#3c3c3c';
-      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 14);
-      this.text(ctx, text, x + 4, y + 1, COLOR.white);
+      const cost = [];
+      const c = hover.cost || {};
+      if (c.minerals) cost.push([0, c.minerals]);
+      if (c.gas) cost.push([1 + s.raceIndex, c.gas]);
+      if (c.supply) cost.push([4 + s.raceIndex, c.supply]);
+      if (c.energy) cost.push([7 + s.raceIndex, c.energy]);
+      const costW = cost.reduce((w, [, n]) => w + 20 + this.textWidth(String(n)), 0);
+      const w = Math.max(this.textWidth(hover.tip), costW) + 10;
+      const h = cost.length ? 32 : 16;
+      const x = Math.max(2, Math.min(SCREEN.w - w - 2, CARD.x + 62 - w / 2)), y = CARD.y - h - 6;
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#484848';
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      this.text(ctx, hover.tip, x + 5, y + 2, COLOR.white);
+      let cx = x + 5;
+      for (const [icon, n] of cost) {
+        this.frame(ctx, 'icons', icon, cx, y + 16);
+        this.text(ctx, String(n), cx + 18, y + 17, COLOR.white);
+        cx += 20 + this.textWidth(String(n));
+      }
     }
   }
 

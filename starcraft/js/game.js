@@ -4,11 +4,12 @@
 // computers on the same frame).
 import { commandCard, MESSAGES } from './units.js';
 import { SCREEN, MINIMAP, COLOR } from './console-ui.js';
+import { Orders } from './bw-ids.js';
 
 export const FRAME_MS = 42;
 const SCROLL_SPEED = 0.7; // map pixels per ms with the arrow keys or the screen edge
-const ORDER = { move: 6, attack: 14, patrol: 152, gather: 79, repair: 34 };
 const RACES = ['zerg', 'terran', 'protoss'];
+const PORTRAITS = new URL('assets/sc/portrait/', document.baseURI).href;
 
 // Solo play: whatever the player commands runs on the next frame.
 export class SoloLockstep {
@@ -44,6 +45,38 @@ export class Game {
     this.lastClick = { t: 0, x: 0, y: 0 };
     this.listeners = [];
     this.ui.setRace(RACES[race]);
+    this.video = Object.assign(document.createElement('video'), { muted: true, playsInline: true, preload: 'auto' });
+    this.video.addEventListener('ended', () => this.portraitIdle());
+    this.portraitSet = null;
+  }
+
+  // ---- portrait: idle fidgets, talking when the unit answers ----
+
+  playClip(file) {
+    if (!file) return;
+    this.video.src = PORTRAITS + file;
+    this.video.play().catch(() => {});
+  }
+
+  portraitIdle() {
+    const idle = this.portraitSet?.idle || [];
+    // Mostly the plain idle loop, now and then one of the other fidgets.
+    this.playClip(Math.random() < 0.8 || idle.length < 2 ? idle[0] : idle[1 + Math.floor(Math.random() * (idle.length - 1))]);
+  }
+
+  updatePortrait() {
+    const u = this.selection[0];
+    const index = u ? this.engine.unitType(u.type).portrait : -1;
+    const set = index >= 0 && index < 65535 ? this.ui.meta.portraits?.[index] : null;
+    if (set === this.portraitSet) return;
+    this.portraitSet = set;
+    if (set) this.portraitIdle();
+    else this.video.removeAttribute('src');
+  }
+
+  portraitTalk() {
+    const talk = this.portraitSet?.talk || [];
+    if (talk.length) this.playClip(talk[Math.floor(Math.random() * talk.length)]);
   }
 
   start() {
@@ -68,6 +101,8 @@ export class Game {
     for (const [target, type, fn, opts] of this.listeners) target.removeEventListener(type, fn, opts);
     this.listeners = [];
     this.canvas.style.cursor = '';
+    this.video.pause();
+    this.video.removeAttribute('src');
   }
 
   on(target, type, fn, opts) {
@@ -175,13 +210,13 @@ export class Game {
       ctx.stroke();
     }
 
-    // Building placement: the footprint in green where it fits, red where it does not.
-    if (this.mode?.kind === 'build' && this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
+    // Building placement (and landing): the footprint in green where it fits, red where it does not.
+    if ((this.mode?.kind === 'build' || this.mode?.kind === 'land') && this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
       const w = this.toWorld(this.pointer);
       const t = this.engine.unitType(this.mode.type);
       const tx = Math.round((w.x - t.w / 2) / 32), ty = Math.round((w.y - t.h / 2) / 32);
       const tw = Math.ceil(t.w / 32), th = Math.ceil(t.h / 32);
-      const ok = this.engine.canPlace(this.mode.type, tx, ty);
+      const ok = this.mode.kind === 'land' ? this.engine.canLand(tx, ty) : this.engine.canPlace(this.mode.type, tx, ty);
       ctx.fillStyle = ok ? 'rgba(24,252,16,0.35)' : 'rgba(252,16,16,0.4)';
       ctx.fillRect(sx(tx * 32), sy(ty * 32), tw * 32, th * 32);
     }
@@ -215,6 +250,9 @@ export class Game {
         ...(this.banner ? [{ text: this.banner, color: COLOR.yellow }] : []),
       ],
       clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
+      portrait: this.video,
+      techIcon: (id) => this.engine.tech(id).icon,
+      upgradeIcon: (id) => this.engine.upgrade(id, this.me).icon,
       drawIcon: (c, frame, x, y, row, w, h) => {
         const icon = this.engine.icon(frame, row);
         if (w) c.drawImage(icon, (icon.width - w) / 2, (icon.height - h) / 2, w, h, x, y, w, h);
@@ -229,7 +267,7 @@ export class Game {
   updateCursor(now) {
     let name = 'arrow';
     if (this.edge) name = `scroll${this.edge}`;
-    else if (this.mode) name = this.mode.kind === 'build' ? 'arrow' : 'targg';
+    else if (this.mode) name = this.mode.kind === 'order' ? 'targg' : 'arrow';
     else if (this.drag?.moved) name = 'drag';
     else if (this.hoverUnit) name = this.hoverUnit.owner === this.me ? 'magg' : this.hoverUnit.owner >= 8 ? 'magy' : 'magr';
     const frames = this.ui.meta.sheets[`cursor-${name}`]?.frames.length || 1;
@@ -245,7 +283,8 @@ export class Game {
 
   updateState() {
     this.playerState = this.engine.player(this.me);
-    this.selection = this.engine.selection();
+    this.selection = this.engine.selectionFull();
+    this.updatePortrait();
     const mine = this.selection.filter((u) => u.owner === this.me);
     this.buttons = mine.length && mine.length === this.selection.length ? commandCard(mine, this.menu, this) : [];
     if (this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
@@ -262,8 +301,9 @@ export class Game {
     this.messages = this.messages.slice(-4);
   }
 
-  needResources(type) {
-    const t = this.engine.unitType(type), p = this.playerState || this.engine.player(this.me);
+  // Why something costing `cost` ({ minerals, gas, supply }, or a unit type) cannot be paid, if so.
+  needResources(cost) {
+    const t = typeof cost === 'number' ? this.engine.unitType(cost) : cost, p = this.playerState || this.engine.player(this.me);
     if (p.minerals < t.minerals) return MESSAGES.minerals;
     if (p.gas < t.gas) return MESSAGES.gas;
     if (t.supply > 0 && p.supplyUsed + t.supply > p.supplyMax) return MESSAGES.supply;
@@ -288,8 +328,13 @@ export class Game {
     this.mode = null;
     if (m.kind === 'order') {
       this.send(this.engine.cmd.order(m.order, world.x, world.y, queue));
-      this.markers.push({ ...world, t: performance.now(), color: m.order === ORDER.attack ? '#fc1010' : '#18fc10' });
+      this.markers.push({ ...world, t: performance.now(), color: m.order === Orders.AttackDefault ? '#fc1010' : '#18fc10' });
       this.acknowledge();
+    } else if (m.kind === 'land') {
+      const t = this.engine.unitType(m.type);
+      const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
+      if (!this.engine.canLand(tx, ty)) { this.notice(MESSAGES.landing); this.mode = m; return; }
+      this.send(this.engine.cmd.land(tx, ty));
     } else if (m.kind === 'build') {
       const t = this.engine.unitType(m.type);
       const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
@@ -320,14 +365,14 @@ export class Game {
     this.sound.play(this.engine.soundFile(a + Math.floor(Math.random() * (b - a + 1))), 100, 0, true);
   }
 
-  acknowledge() { this.voice('yes'); }
+  acknowledge() { this.voice('yes'); this.portraitTalk(); }
 
   selectAt(world0, world1, shift, sameType) {
     const n = this.engine.select(world0.x, world0.y, world1.x, world1.y, shift, sameType);
     this.menu = null;
     this.send(this.engine.cmd.select());
     this.updateState();
-    if (n) this.voice('what');
+    if (n) { this.voice('what'); this.portraitTalk(); }
   }
 
   // ---- input ----
@@ -378,6 +423,8 @@ export class Game {
       const pos = this.ui.cardAt(p.x, p.y);
       const button = this.buttons.find((b) => b.pos === pos);
       if (button && e.button === 0) { this.pressedPos = pos; view.setPointerCapture(e.pointerId); return; }
+      const passenger = this.ui.passengerAt(p.x, p.y);
+      if (passenger != null && e.button === 0) { this.send(this.engine.cmd.unload(passenger)); return; }
       if (this.ui.onConsole(p.x, p.y)) return;
       const w = this.toWorld(p);
       if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
