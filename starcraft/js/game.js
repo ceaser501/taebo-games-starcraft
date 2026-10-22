@@ -77,6 +77,7 @@ export class Game {
     // The game runs full screen; a page may only ask for it when the player clicks, so the start
     // button asks (app.js) and otherwise the first click in the game does.
     this.wantFullscreen = true;
+    this.actionFrames = [];
   }
 
   // ---- what the original announces: unit ready, job finished, research done, under attack, nukes ----
@@ -317,7 +318,17 @@ export class Game {
   }
 
   send(bytes) {
-    if (bytes) this.lockstep.submit(bytes);
+    if (!bytes) return;
+    this.lockstep.submit(bytes);
+    this.actionFrames.push(this.engine.frame);
+  }
+
+  // Actions per minute over the last minute of game time (less at the start).
+  apm() {
+    const now = this.engine.frame, span = Math.round(60000 / FRAME_MS);
+    while (this.actionFrames.length && this.actionFrames[0] < now - span) this.actionFrames.shift();
+    const minutes = Math.max(1, Math.min(now, span)) * FRAME_MS / 60000;
+    return Math.round(this.actionFrames.length / Math.max(minutes, 10 / 60));
   }
 
   // ---- screen ----
@@ -519,6 +530,7 @@ export class Game {
       ],
       clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
       portrait: this.portraitFrame(now),
+      info: { mode: storageGet('sc-info') || 'all', overview: this.overview, apm: this.apm() },
       techIcon: (id) => this.engine.tech(id).icon,
       upgradeIcon: (id) => this.engine.upgrade(id, this.me).icon,
       drawIcon: (c, frame, x, y, row, w, h) => {
@@ -552,6 +564,7 @@ export class Game {
 
   updateState() {
     this.playerState = this.engine.player(this.me);
+    this.overview = this.engine.overview(this.me);
     this.selection = this.engine.selectionFull();
     this.updatePortrait();
     const mine = this.selection.filter((u) => u.owner === this.me);

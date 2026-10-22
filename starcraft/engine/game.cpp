@@ -1053,3 +1053,60 @@ API const char* bw_unit_info(int x, int y) {
 		(d.from.x + d.to.x + 1) / 2, (d.from.y + d.to.y + 1) / 2);
 	return text_out.c_str();
 }
+
+// An overview of a player's side for the wide status panel: what is being made (icon set 0 frame,
+// percent done), workers by job (minerals, gas, idle, first idle worker's id) and army units by type.
+API const char* bw_overview_json(int slot) {
+	a_string prod = "[", army = "[";
+	std::array<int, 228> counts{};
+	int minerals = 0, gas = 0, idle = 0, idle_id = 0;
+	auto pct = [](int left, int total) { return total > 0 ? std::max(0, std::min(100, 100 - left * 100 / total)) : 0; };
+	auto add_prod = [&](int icon, int p) {
+		if (prod.size() > 1) prod += ",";
+		prod += format("[%d,%d]", icon, p);
+	};
+	for (unit_t* u : ptr(g->st.player_units.at(slot))) {
+		const unit_type_t* ut = u->unit_type;
+		if (g->ut_worker(u) && g->u_completed(u)) {
+			switch (u->order_type->id) {
+			case Orders::MoveToMinerals: case Orders::WaitForMinerals: case Orders::MiningMinerals: case Orders::ReturnMinerals:
+				++minerals; break;
+			case Orders::MoveToGas: case Orders::WaitForGas: case Orders::HarvestGas: case Orders::ReturnGas:
+				++gas; break;
+			case Orders::Guard: case Orders::PlayerGuard: case Orders::Nothing: case Orders::Stop:
+				++idle;
+				if (!idle_id) idle_id = g->get_unit_id(u).raw_value;
+				break;
+			default: break;
+			}
+		}
+		if (!g->u_completed(u)) {
+			// Buildings going up, eggs and cocoons, mutating buildings (units in training are
+			// listed by the building making them).
+			if (!g->ut_building(u) && !g->unit_is_egg(u)) continue;
+			const unit_type_t* to = !u->build_queue.empty() && (g->unit_is_egg(u) || g->unit_race(u) == race_t::zerg) ? u->build_queue.front() : ut;
+			add_prod((int)to->id, pct(u->remaining_build_time, to->build_time));
+			continue;
+		}
+		if (g->ut_building(u)) {
+			if (u->current_build_unit && !g->u_completed(u->current_build_unit) && !g->unit_is_building_addon(u)) {
+				auto* b = u->current_build_unit;
+				add_prod((int)b->unit_type->id, pct(b->remaining_build_time, b->unit_type->build_time));
+			}
+			if (u->building.researching_type) add_prod(u->building.researching_type->icon, pct(u->building.upgrade_research_time, u->building.researching_type->research_time));
+			if (u->building.upgrading_type) {
+				auto* t = u->building.upgrading_type;
+				add_prod(t->icon, pct(u->building.upgrade_research_time, t->time_cost_base + t->time_cost_factor * (u->building.upgrading_level - 1)));
+			}
+			continue;
+		}
+		if (!g->ut_worker(u) && !g->unit_is_egg(u) && !g->unit_is(u, UnitTypes::Zerg_Larva) && !g->unit_is_fighter(u) && (size_t)ut->id < counts.size()) ++counts[(size_t)ut->id];
+	}
+	for (size_t t = 0; t != counts.size(); ++t) {
+		if (!counts[t]) continue;
+		if (army.size() > 1) army += ",";
+		army += format("[%d,%d]", (int)t, counts[t]);
+	}
+	text_out = format("{\"prod\":%s],\"workers\":[%d,%d,%d,%d],\"army\":%s]}", prod.c_str(), minerals, gas, idle, idle_id, army.c_str());
+	return text_out.c_str();
+}

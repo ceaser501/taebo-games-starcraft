@@ -9,7 +9,14 @@ export const CONSOLE_Y = 292;
 export const MINIMAP = { x: 6, y: 348, w: 128, h: 128 };
 const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
 // Per race: the console art column where the status panel is widened, and how many columns repeat.
-const WIDEN = { terran: [274, 1], protoss: [238, 1], zerg: [308, 24] };
+// Per race, in the console art: where the status panel ends (`at`), its left and right frame
+// edges and a plain column of its window (copied to make the added panel), and the first row of
+// the panel's frame (above it the art belongs to neighbouring parts).
+const PANEL = {
+  terran: { at: 410, left: [150, 162], right: [398, 410], col: 274, top: 74 },
+  protoss: { at: 410, left: [143, 155], right: [398, 410], col: 238, top: 72 },
+  zerg: { at: 410, left: [146, 160], right: [396, 410], col: 308, slice: 24, top: 72 },
+};
 // Per race: the window above the portrait where the clock shows (console art x, y, w, h).
 const CLOCK = { terran: [414, 95, 64, 17], protoss: [416, 90, 66, 17], zerg: [414, 100, 64, 15] };
 const STATUS = { x: 154, y: 387, w: 250, h: 90 };
@@ -48,16 +55,25 @@ export class ConsoleUI {
   }
 
   // On a screen wider than 640 the console keeps its original size, the minimap at the left edge
-  // and the command card at the right edge; the status panel's black window grows in between, at a
-  // column (or a repeated slice, for the Zerg's ribbed frame) where the art is the same left to right.
+  // and the portrait and command card at the right edge. The room in between becomes a second
+  // panel right of the status panel, built from the status panel's own frame (left edge, black
+  // window, right edge), for the overview (see drawInfo).
   get extra() { return Math.max(0, this.width - SCREEN.w); }
 
-  // Screen x -> console art x.
+  // Screen x -> console art x (the new panel counts as the status panel's window).
   artX(x) {
-    const [col] = WIDEN[this.race];
-    if (x < col) return x;
-    if (x < col + this.extra) return col;
+    const { at, col } = PANEL[this.race];
+    if (x < at) return x;
+    if (x < at + this.extra) return col;
     return x - this.extra;
+  }
+
+  // The added panel's black window on screen, or null when there is no room for it.
+  get infoRect() {
+    const { at, left, right } = PANEL[this.race];
+    const w = this.extra - (left[1] - left[0]) - (right[1] - right[0]) - 6;
+    if (w < 40) return null;
+    return { x: at + (left[1] - left[0]) + 3, y: STATUS.y + 1, w, h: STATUS.h - 4 };
   }
 
   get names() { return this.meta.names; }
@@ -172,17 +188,30 @@ export class ConsoleUI {
     const art = this.meta.console[this.race];
     const img = this.images[art.console.file];
     const extra = this.extra, h = img.height;
-    const [col, slice] = WIDEN[this.race];
+    const P = PANEL[this.race];
     this.drawResources(ctx, s);
-    ctx.drawImage(img, 0, 0, col, h, 0, CONSOLE_Y, col, h);
-    for (let i = 0; i < extra; i += slice) {
-      const w = Math.min(slice, extra - i);
-      ctx.drawImage(img, col, 0, w, h, col + i, CONSOLE_Y, w, h);
+    // Up to the status panel's right edge as is; then the new panel; then the rest moved right.
+    ctx.drawImage(img, 0, 0, P.at, h, 0, CONSOLE_Y, P.at, h);
+    if (extra) {
+      const top = P.top, ph = h - top, lw = P.left[1] - P.left[0], rw = P.right[1] - P.right[0];
+      const room = extra - lw - rw;
+      if (room > 0) {
+        ctx.drawImage(img, P.left[0], top, lw, ph, P.at, CONSOLE_Y + top, lw, ph);
+        const sw = P.slice || 1;
+        for (let i = 0; i < room; i += sw) {
+          const w = sw === 1 ? room : Math.min(sw, room - i);
+          ctx.drawImage(img, P.col, top, w, ph, P.at + lw + i, CONSOLE_Y + top, w, ph);
+        }
+        ctx.drawImage(img, P.right[0], top, rw, ph, P.at + lw + room, CONSOLE_Y + top, rw, ph);
+      } else {
+        ctx.drawImage(img, P.at - 1, 0, 1, h, P.at, CONSOLE_Y, extra, h);
+      }
     }
-    ctx.drawImage(img, col, 0, img.width - col, h, col + extra, CONSOLE_Y, img.width - col, h);
+    ctx.drawImage(img, P.at, 0, img.width - P.at, h, P.at + extra, CONSOLE_Y, img.width - P.at, h);
     this.drawMinimap(ctx, s);
     this.drawMessages(ctx, s);
-    this.drawStatus(ctx, s); // left-aligned in its widened window
+    this.drawStatus(ctx, s);
+    this.drawInfo(ctx, s);
     ctx.save();
     ctx.translate(extra, 0);
     // The game clock in the small window right above the portrait.
@@ -308,6 +337,92 @@ export class ConsoleUI {
       });
     }
     if (u.energy >= 0 && u.maxEnergy > 0 && u.completed) this.text(ctx, `${u.energy}/${u.maxEnergy}`, STATUS.x + 40, STATUS.y + 78, COLOR.blue, 'font8', 'center');
+  }
+
+  // The status panel's extra room on wide screens (right of the original panel, which keeps its
+  // 12-unit area): your side at a glance. Modes: prod, workers, army, apm, all.
+  drawInfo(ctx, s) {
+    const info = s.info, o = info?.overview;
+    const r = this.infoRect;
+    if (!o || !r) return;
+    const { x: x0, y: y0, w, h } = r;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, w, h);
+    ctx.clip();
+    const race = s.raceIndex;
+    const boxes = (items, y, draw) => {
+      const per = Math.max(1, Math.floor(w / 38));
+      items.slice(0, per).forEach((it, i) => draw(it, x0 + i * 38, y));
+      if (items.length > per) this.text(ctx, `+${items.length - per}`, x0 + per * 38 - 14, y + 24, COLOR.white, 'font8');
+    };
+    const prodRow = (y) => {
+      if (!o.prod.length) { this.text(ctx, 'Nothing in production', x0, y + 12, COLOR.grey, 'font8'); return; }
+      boxes(o.prod, y, ([icon, pct], x) => {
+        this.frame(ctx, `cmdbtns-${this.race}`, 2, x, y);
+        s.drawIcon(ctx, icon, x + 1, y + 1, 0, 34, 32);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x + 3, y + 30, 30, 3);
+        ctx.fillStyle = '#18fc10';
+        ctx.fillRect(x + 3, y + 30, Math.round(30 * pct / 100), 3);
+      });
+    };
+    const armyRow = (y) => {
+      if (!o.army.some(([t]) => t !== 42)) { this.text(ctx, 'No army yet', x0, y + 12, COLOR.grey, 'font8'); return; }
+      const army = o.army.filter(([t]) => t !== 42).sort((a, b) => b[1] - a[1]); // overlords are supply, not army
+      boxes(army, y, ([type, n], x) => {
+        this.frame(ctx, `cmdbtns-${this.race}`, 13, x, y);
+        this.wireframe(ctx, 'grpwire', type, x + 2, y + 2, 32, 1, 1);
+        this.text(ctx, String(n), x + 33, y + 22, COLOR.white, 'font8', 'right');
+      });
+    };
+    const workersLine = (y) => {
+      const [m, g, idle] = o.workers;
+      let x = x0;
+      this.frame(ctx, 'icons', 0, x, y);
+      this.text(ctx, String(m), x + 16, y + 1, COLOR.white, 'font8');
+      x += 34;
+      this.frame(ctx, 'icons', 1 + race, x, y);
+      this.text(ctx, String(g), x + 16, y + 1, COLOR.white, 'font8');
+      x += 34;
+      this.text(ctx, `Idle ${idle}`, x, y + 1, idle ? COLOR.yellow : COLOR.grey, 'font8');
+    };
+    const apmLine = (x, y) => this.text(ctx, `APM ${info.apm}`, x, y + 1, COLOR.blue, 'font8');
+    switch (info.mode) {
+      case 'prod':
+        this.text(ctx, 'Production', x0, y0 + 2, COLOR.blue, 'font8');
+        prodRow(y0 + 14);
+        break;
+      case 'workers': {
+        const [m, g, idle] = o.workers;
+        this.text(ctx, 'Workers', x0, y0 + 2, COLOR.blue, 'font8');
+        this.frame(ctx, 'icons', 0, x0, y0 + 18);
+        this.text(ctx, `Minerals  ${m}`, x0 + 18, y0 + 19, COLOR.white);
+        this.frame(ctx, 'icons', 1 + race, x0, y0 + 36);
+        this.text(ctx, `Gas  ${g}`, x0 + 18, y0 + 37, COLOR.white);
+        this.text(ctx, `Idle  ${idle}`, x0 + 18, y0 + 55, idle ? COLOR.yellow : COLOR.grey);
+        break;
+      }
+      case 'army':
+        this.text(ctx, 'Army', x0, y0 + 2, COLOR.blue, 'font8');
+        armyRow(y0 + 14);
+        if (o.army.length > Math.floor(w / 38)) boxes([...o.army].sort((a, b) => b[1] - a[1]).slice(Math.floor(w / 38)), y0 + 50, ([type, n], x) => {
+          this.frame(ctx, `cmdbtns-${this.race}`, 13, x, y0 + 50);
+          this.wireframe(ctx, 'grpwire', type, x + 2, y0 + 52, 32, 1, 1);
+          this.text(ctx, String(n), x + 33, y0 + 72, COLOR.white, 'font8', 'right');
+        });
+        break;
+      case 'apm':
+        this.text(ctx, 'APM', x0, y0 + 2, COLOR.blue, 'font8');
+        this.text(ctx, String(info.apm), x0, y0 + 16, COLOR.white, 'font16');
+        break;
+      default: // all: workers and APM on one line, then production, then army
+        workersLine(y0 + 1);
+        apmLine(x0 + w - 44, y0 + 1);
+        prodRow(y0 + 14);
+        armyRow(y0 + 50);
+    }
+    ctx.restore();
   }
 
   passengerAt(x, y) {
