@@ -472,7 +472,9 @@ struct action_functions: state_functions {
 		bool retval = false;
 		for (unit_t* u : selected_units(owner)) {
 			const order_type_t* order = input_order;
-			if (order->tech_type == TechTypes::None) {
+			// The nuke order names a tech (Nuclear Strike) past the 44 in techdata.dat; the order
+			// check covers it (only ghosts may paint nukes) and the order itself needs an armed silo.
+			if (order->tech_type == TechTypes::None || (size_t)order->tech_type >= (size_t)TechTypes::None) {
 				if (!unit_can_receive_order(u, order, owner)) continue;
 			} else {
 				if (!unit_can_use_tech(u, get_tech_type(order->tech_type), owner)) continue;

@@ -153,6 +153,8 @@ export class Engine {
   }
 
   select(x0, y0, x1, y1, shift, sameType) { return this.M._bw_select(x0, y0, x1, y1, shift ? 1 : 0, sameType ? 1 : 0); }
+  nukesReady(slot) { return this.M._bw_nukes_ready(slot); }
+  selectId(id) { return this.M._bw_select_id(id); }
   syncSelection() { return this.M._bw_sync_selection(); }
   selection() { return this.json(this.M._bw_selection_json()); }
   player(slot) { return this.json(this.M._bw_player_json(slot)); }

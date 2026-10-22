@@ -419,9 +419,10 @@ API int bw_select(int x0, int y0, int x1, int y1, int shift, int same_type) {
 	if (x1 - x0 <= 4 && y1 - y0 <= 4) {
 		unit_t* u = g->select_get_unit_at({x0, y0});
 		if (u && !g->sprite_visible_to_viewer(u->sprite)) u = nullptr;
-		if (u && same_type && own_unit(u)) {
+		// Same-type selection (double click, ctrl+click) is for units only; buildings stay single.
+		if (u && same_type && own_unit(u) && g->unit_can_be_multi_selected(u)) {
 			for (unit_t* u2 : g->find_units({g->screen_pos, g->screen_pos + xy(g->view_width, g->view_height)})) {
-				if (u2->owner == u->owner && u2->unit_type == u->unit_type && g->unit_can_be_selected(u2)) picked.push_back(u2);
+				if (u2->owner == u->owner && u2->unit_type == u->unit_type && g->unit_can_be_selected(u2) && g->unit_can_be_multi_selected(u2)) picked.push_back(u2);
 			}
 		} else if (u) {
 			if (shift && own_unit(u) && g->current_selection_is_selected(u)) {
@@ -952,4 +953,22 @@ API int bw_placement(int type, int tx, int ty, int land) {
 		}
 	}
 	return ok ? 1 : 0;
+}
+
+// Selects one unit by id (as from bw_units_json), like clicking exactly that unit.
+API int bw_select_id(int id) {
+	unit_t* u = g->get_unit(unit_id((uint16_t)id));
+	if (!u || !g->sprite_visible_to_viewer(u->sprite)) return 0;
+	g->current_selection_clear();
+	g->current_selection_add(u);
+	return 1;
+}
+
+// How many of a player's nuclear silos hold a finished nuke (the ghost's Nuclear Strike needs one).
+API int bw_nukes_ready(int slot) {
+	int n = 0;
+	for (unit_t* u : ptr(g->st.player_units.at(slot))) {
+		if (g->unit_is(u, UnitTypes::Terran_Nuclear_Silo) && u->building.silo.nuke && g->u_completed(u->building.silo.nuke)) ++n;
+	}
+	return n;
 }

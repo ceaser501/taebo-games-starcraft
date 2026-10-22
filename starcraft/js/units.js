@@ -46,7 +46,7 @@ const SPELL = {
   flare: [T.Optical_Flare, O.CastOpticalFlare, 1248],
   // Medics heal in the attack slot: AttackDefault becomes heal-move for them.
   heal: [T.Healing, O.AttackDefault, 1246],
-  nuke: [T.Nuclear_Strike, O.NukePaint, 'nuke'],
+  nuke: [null, O.NukePaint, 'nuke'], // no tech entry; shown while a silo holds a nuke
 };
 
 // Lifting buildings, and per building what it trains, researches, upgrades and adds: [id, position, text].
@@ -102,7 +102,9 @@ export function commandCard(units, menu, game) {
   const unitCost = (type) => { const t = engine.unitType(type); return { minerals: t.minerals, gas: t.gas, supply: t.supply }; };
   const button = (id, pos, icon, text, run, extra = {}) => ({ id, pos, icon, ...label(text), run, ...extra });
 
-  const order = (id, pos, icon, text, ord) => button(id, pos, icon, text, () => game.target('order', { order: ord, button: id }), { enabled: engine.can('order', ord) });
+  // Attack stays lit: AttackDefault turns into each unit's own attack order (turrets, sieged tanks).
+  const order = (id, pos, icon, text, ord) => button(id, pos, icon, text, () => game.target('order', { order: ord, button: id }),
+    { enabled: ord === O.AttackDefault || engine.can('order', ord) });
   const now = (id, pos, icon, text, cmd, voice = true) => button(id, pos, icon, text, () => { game.send(cmd()); if (voice) game.acknowledge(); });
   const cancel = (text, cmd) => now('cancel', 8, ICON.cancel, text, cmd, false);
   const basic = (opts = {}) => [
@@ -114,6 +116,11 @@ export function commandCard(units, menu, game) {
   ];
   const spell = (name, pos) => {
     const [tech, ord, text] = SPELL[name];
+    // Nuclear Strike appears while one of your silos holds an armed nuke.
+    if (name === 'nuke') {
+      if (!engine.nukesReady(me)) return null;
+      return button(name, pos, 36, text, () => game.target('order', { order: ord, button: name })); // the radiation sign
+    }
     if (engine.techState(me, tech) !== 2 && !engine.can('tech', tech)) return null;
     const info = engine.tech(tech);
     return button(name, pos, info.icon, text, () => {

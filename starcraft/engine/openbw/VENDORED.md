@@ -9,3 +9,4 @@ Local changes, all marked with comments:
 - `ui/ui.h`: tileset graphics load on first use instead of all eight at start.
 - `ui/ui.h`: `sprite_visible_to_viewer` hook so the page can hide sprites under fog of war.
 - `bwgame.h`: maps in the Remastered CHK versions (64, 205, 206) and the `STRx` string chunk load.
+- `actions.h`: orders whose tech is past techdata.dat's 44 entries (the ghost's nuke) are checked as plain orders instead of failing.
