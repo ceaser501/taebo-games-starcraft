@@ -1,5 +1,6 @@
 // Page setup: password gate, menu, online lobby, loading the engine and data, and starting matches.
 import { Engine } from './engine.js';
+import { ConsoleUI } from './console-ui.js';
 import { Sound } from './sound.js';
 import { Game, SoloLockstep } from './game.js';
 import { NetLockstep } from './lockstep.js';
@@ -8,12 +9,10 @@ import { Net, netErrorText } from './net.js';
 const $ = (id) => document.getElementById(id);
 const TERRAN = 1;
 const DEFAULT_MAP = /crystallis/i;
-// Command icons for the resource counters (Remastered's own small icons are DDS only):
-// mineral field, then per race (Z, T, P) the gas building and the supply provider.
-const RESOURCE_ICONS = { minerals: 176, gas: [149, 110, 157], supply: [42, 109, 156] };
 const PANELS = ['menu', 'loading', 'pause', 'result', 'gate', 'lobby'];
 
 let engine = null;
+let ui = null;
 let game = null;
 let maps = [];
 const sound = new Sound();
@@ -49,7 +48,7 @@ async function init() {
   showOnly('menu');
   $('player-name').value = localStorageGet('sc-name') || '';
   try {
-    engine = await Engine.load();
+    [engine, ui] = await Promise.all([Engine.load(), ConsoleUI.load()]);
   } catch (err) {
     console.error(err);
     $('notice').textContent = `게임 데이터를 불러오지 못했어요 (${err.message}). 데이터 변환(npm run sc:pack)을 했는지 확인해 주세요.`;
@@ -65,19 +64,6 @@ async function init() {
   $('join').disabled = false;
 }
 
-// Puts icons next to the resource counters.
-function placeResourceIcons(race) {
-  const frames = [RESOURCE_ICONS.minerals, RESOURCE_ICONS.gas[race], RESOURCE_ICONS.supply[race]];
-  document.querySelectorAll('#resources .icon').forEach((el, i) => {
-    const src = engine.icon(frames[i], 0);
-    const c = document.createElement('canvas');
-    c.width = src.width;
-    c.height = src.height;
-    c.getContext('2d').drawImage(src, 0, 0);
-    el.replaceChildren(c);
-  });
-}
-
 // Loads the map and starts a game. `me` is this player's index; `makeLockstep` builds the
 // command channel once the game slots are known.
 async function launch({ file, seed, players, me, makeLockstep }) {
@@ -88,10 +74,7 @@ async function launch({ file, seed, players, me, makeLockstep }) {
   const mySlot = slots[me];
   engine.setViewer(mySlot);
   $('loading').hidden = true;
-  $('hud').hidden = false;
-  showBanner('');
-  placeResourceIcons(TERRAN);
-  game = new Game({ engine, sound, me: mySlot, slots, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
+  game = new Game({ engine, ui, sound, me: mySlot, slots, race: TERRAN, lockstep: makeLockstep(slots, mySlot), onEnd: onGameEvent });
   game.start();
   if (params.has('debug')) window.sc = { engine, game, online };
 }
@@ -126,7 +109,6 @@ function endGame() {
   game?.stop();
   game = null;
   if (online) online.lockstep = null;
-  $('hud').hidden = true;
   $('pause').hidden = true;
   $('result').hidden = true;
   $('view').getContext('2d').clearRect(0, 0, 1e5, 1e5);
@@ -157,9 +139,9 @@ function playerName() {
 function netStatus(text) { $('net-status').textContent = text; }
 function lobbyStatus(text) { $('lobby-status').textContent = text; }
 
+// A line of status text in the game's message area (connection trouble, desync).
 function showBanner(text) {
-  $('net-banner').textContent = text;
-  $('net-banner').hidden = !text;
+  if (game) game.banner = text;
 }
 
 // A short beep when the friend arrives.
@@ -201,7 +183,7 @@ function openNet(role) {
     onMessage: (m) => (role === 'host' ? onHostMessage(m) : onGuestMessage(m)),
     onClosed: friendLeft,
     onError: (err) => { leaveOnline(); netStatus(netErrorText(err)); },
-    onLost: () => (game ? showBanner('상대 연결이 끊겼어요. 다시 들어오기를 기다리는 중… (최대 1분)') : lobbyStatus('상대 연결이 잠깐 끊겼어요…')),
+    onLost: () => (game ? showBanner('Opponent disconnected. Waiting up to 1 minute...') : lobbyStatus('상대 연결이 잠깐 끊겼어요…')),
     onBack: () => { showBanner(''); lobbyStatus(''); },
   });
 }
@@ -294,7 +276,7 @@ async function startOnline(file, seed) {
   // The lockstep exists before loading so packets that arrive meanwhile are kept.
   const lockstep = new NetLockstep({
     net: online.net, me, slots: [0, 1],
-    onDesync: (frame) => showBanner(`게임이 서로 어긋났어요 (프레임 ${frame}). 이 판은 두 화면의 결과가 다를 수 있어요.`),
+    onDesync: (frame) => showBanner(`Game out of sync at frame ${frame}.`),
   });
   online.lockstep = lockstep;
   try {
@@ -346,7 +328,6 @@ $('lobby-start').onclick = startHostMatch;
 $('lobby-leave').onclick = leaveOnline;
 $('lobby-map').onchange = () => { online.map = $('lobby-map').value; online.net.send(lobbyInfo()); };
 $('copy-code').onclick = () => navigator.clipboard?.writeText(online?.code || '').then(() => lobbyStatus('복사했어요.'), () => {});
-$('menu-button').onclick = togglePause;
 $('resume').onclick = togglePause;
 $('quit').onclick = quit;
 $('result-ok').onclick = resultOk;

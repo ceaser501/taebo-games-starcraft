@@ -565,7 +565,7 @@ API const char* bw_sound_file(int id) {
 }
 
 // An icon as RGBA, transparent around it. Set 0: command card icons (cmdicons.grp), coloured
-// through ticon.pcx row `row` (0 normal, 1 disabled, 2 lit). Set 1: the resource and supply icons
+// through ticon.pcx table `row` (0 normal, 1 disabled, 2 lit). Set 1: the resource and supply icons
 // over the map (game/icons.grp; a stub in Remastered data). Size: bw_icon_w/h.
 static std::array<grp_t, 2> icon_grps;
 static pcx_image ticon;
@@ -598,7 +598,8 @@ API const uint8_t* bw_icon(int set, int frame_index, int row) {
 	for (size_t i = 0; i != indexed.size(); ++i) {
 		int c = indexed[i];
 		if (!c) continue;
-		if (set == 0 && (size_t)row < ticon.height && (size_t)c < ticon.width) c = ticon.data[row * ticon.width + c];
+		// ticon.pcx is one row of six 16-colour tables: 0 normal, 1 disabled, 2 lit...
+		if (set == 0 && c < 16 && (size_t)(row * 16 + c) < ticon.data.size()) c = ticon.data[row * 16 + c];
 		icon_rgba[i] = (uint32_t)wpe[4 * c] | (uint32_t)wpe[4 * c + 1] << 8 | (uint32_t)wpe[4 * c + 2] << 16 | 0xff000000u;
 	}
 	return (const uint8_t*)icon_rgba.data();
@@ -606,3 +607,10 @@ API const uint8_t* bw_icon(int set, int frame_index, int row) {
 API int bw_icon_w() { return icon_w; }
 API int bw_icon_h() { return icon_h; }
 API int bw_icon_count(int set) { return (int)icon_grp(set).frames.size(); }
+
+// Owner of the unit under a world position (-1 for none), for the cursor.
+API int bw_unit_at(int x, int y) {
+	unit_t* u = g->select_get_unit_at({x, y});
+	if (!u || !g->sprite_visible_to_viewer(u->sprite)) return -1;
+	return u->owner;
+}

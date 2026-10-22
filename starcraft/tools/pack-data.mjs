@@ -7,10 +7,11 @@
 //
 // Output (git-ignored), under starcraft/assets/sc/: data/<pack>.bin.gz and data/<pack>.idx
 // ("path offset size" per line, offsets into the unzipped blob), maps/**.scm|scx with maps.json,
-// and sound/**.wav.
+// sound/**.wav, and ui/ (the original interface art as PNG sheets, fonts, unit names; ui.json).
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { readDds, readDdsGrp, sheet, readFont, readPcx, encodePng } from './image-formats.mjs';
 
 const src = path.resolve(process.argv[2] || '../taebo-games-starcraft-assets');
 const out = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../assets/sc');
@@ -98,5 +99,75 @@ for (const rel of walk(path.join(src, 'Maps'))) {
   maps.push({ name, file, players: Number(name.match(/^\((\d)\)/)?.[1] || 0), folder: path.dirname(rel) });
 }
 fs.writeFileSync(path.join(out, 'maps.json'), JSON.stringify(maps, null, 1));
+
+// ---- Interface: console art, wireframes, cursors, fonts and names, as PNG + ui.json ----
+const ui = { console: {}, sheets: {}, fonts: {}, names: [] };
+const uiDir = path.join(out, 'ui');
+fs.mkdirSync(uiDir, { recursive: true });
+const sd = (rel) => path.join(src, 'SD', rel);
+const writeDds = (rel, name) => {
+  const d = readDds(fs.readFileSync(sd(rel)));
+  fs.writeFileSync(path.join(uiDir, `${name}.png`), encodePng(d.width, d.height, d.rgba));
+  return { file: `${name}.png`, w: d.width, h: d.height };
+};
+const writeSheet = (rel, name, columns = 16) => {
+  const s = sheet(readDdsGrp(fs.readFileSync(sd(rel))), columns);
+  fs.writeFileSync(path.join(uiDir, `${name}.png`), s.png);
+  ui.sheets[name] = { file: `${name}.png`, cell: s.cell, frames: s.frames };
+};
+for (const race of ['terran', 'protoss', 'zerg']) {
+  const dir = `game/consoles/${race}`;
+  ui.console[race] = {
+    console: writeDds(`${dir}/console.DDS`, `console-${race}`),
+    portrait: writeDds(`${dir}/conover.DDS`, `conover-${race}`),
+    time: writeDds(`${dir}/console_TIME.DDS`, `time-${race}`),
+  };
+  writeSheet(`${dir}/cmdbtns.dds.grp`, `cmdbtns-${race}`, 10);
+}
+ui.console.progress = { empty: writeDds('game/tpbrempt.DDS', 'pbrempt'), full: writeDds('game/consoles/terran/pbrfull.DDS', 'pbrfull') };
+writeSheet('game/icons.dds.grp', 'icons', 12);
+writeSheet('unit/wirefram/wirefram.dds.grp', 'wirefram', 8);
+writeSheet('unit/wirefram/grpwire.dds.grp', 'grpwire', 16);
+writeSheet('unit/wirefram/tranwire.dds.grp', 'tranwire', 16);
+for (const f of fs.readdirSync(sd('cursor'))) writeSheet(`cursor/${f}`, `cursor-${f.replace('.dds.grp', '')}`, 16);
+
+// Fonts: one row per text colour (pale blue, yellow, white, grey, red, green, as tfontgam.pcx
+// maps them), glyphs side by side. Coloured with the badlands palette; the interface colours
+// are the same in every tileset palette.
+const palette = fs.readFileSync(path.join(src, 'TileSet', 'badlands.wpe'));
+const fontGamma = readPcx(fs.readFileSync(path.join(src, 'game', 'tfontgam.pcx')));
+const FONT_COLORS = 6;
+for (const size of [8, 10, 14, 16]) {
+  const font = readFont(fs.readFileSync(sd(`font/font${size}.fnt`)));
+  const codes = Object.keys(font.glyphs).map(Number);
+  const W = codes.reduce((s, c) => s + font.glyphs[c].w + font.glyphs[c].xo, 0), H = font.maxH * FONT_COLORS;
+  const rgba = new Uint8Array(W * H * 4);
+  const glyphs = {};
+  let x = 0;
+  for (const c of codes) {
+    const g = font.glyphs[c];
+    glyphs[c] = [x, g.w + g.xo, g.yo];
+    for (let color = 0; color < FONT_COLORS; color++) {
+      for (let y = 0; y < g.h; y++) for (let gx = 0; gx < g.w; gx++) {
+        const v = g.px[y * g.w + gx];
+        if (!v) continue;
+        const p = fontGamma.px[color * 8 + v];
+        const d = ((color * font.maxH + g.yo + y) * W + x + g.xo + gx) * 4;
+        rgba.set([palette[p * 4], palette[p * 4 + 1], palette[p * 4 + 2], 255], d);
+      }
+    }
+    x += g.w + g.xo;
+  }
+  fs.writeFileSync(path.join(uiDir, `font${size}.png`), encodePng(W, H, rgba));
+  ui.fonts[`font${size}`] = { file: `font${size}.png`, height: font.maxH, glyphs };
+}
+
+// Unit names (the first 228 strings of stat_txt.tbl), as in the original English game.
+const tbl = fs.readFileSync(path.join(src, 'rez', 'stat_txt.tbl'));
+for (let i = 0; i < 228; i++) {
+  const o = tbl.readUInt16LE(2 + i * 2);
+  ui.names.push(tbl.toString('latin1', o, tbl.indexOf(0, o)));
+}
+fs.writeFileSync(path.join(uiDir, 'ui.json'), JSON.stringify(ui));
 
 console.log(`${files.length} files in ${sizes.join(', ')} (${(total / 1e6).toFixed(1)} MB), ${sounds} sounds, ${maps.length} maps -> ${out}`);

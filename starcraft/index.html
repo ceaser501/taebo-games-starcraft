@@ -20,26 +20,6 @@
 <body>
   <canvas id="view"></canvas>
 
-  <div id="hud" hidden>
-    <div id="resources">
-      <span class="res"><i class="icon" data-icon="0"></i><b id="minerals">0</b></span>
-      <span class="res"><i class="icon" data-icon="1"></i><b id="gas">0</b></span>
-      <span class="res"><i class="icon" data-icon="4"></i><b id="supply">0/0</b></span>
-    </div>
-    <div id="topleft">
-      <button type="button" id="menu-button">메뉴 (F10)</button>
-      <span id="clock">0:00</span>
-      <span id="waiting" hidden>상대를 기다리는 중…</span>
-      <span id="net-banner" hidden></span>
-    </div>
-    <div id="notices"></div>
-    <div id="console">
-      <div id="mini-frame"><canvas id="minimap"></canvas></div>
-      <div id="info"></div>
-      <div id="card"></div>
-    </div>
-  </div>
-
   <div id="pause" class="panel" hidden>
     <h2>메뉴</h2>
     <button type="button" id="resume">계속하기</button>

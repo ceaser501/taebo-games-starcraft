@@ -1,15 +1,14 @@
-// One match: runs the engine at Brood War's "Fastest" speed, draws the view, and turns mouse and
-// keyboard input into commands. Commands never touch the game directly; they go to the lockstep
-// (solo: run on the next frame; online: run on both computers on the same frame).
-import { names, commandCard } from './units.js';
+// One match: runs the engine at Brood War's "Fastest" speed, draws the original 640x480 screen
+// (map view plus console), and turns mouse and keyboard input into commands. Commands never touch
+// the game directly; they go to the lockstep (solo: run on the next frame; online: run on both
+// computers on the same frame).
+import { commandCard, MESSAGES } from './units.js';
+import { SCREEN, MINIMAP, COLOR } from './console-ui.js';
 
 export const FRAME_MS = 42;
-const VIEW_LINES = 480; // the original screen height; the view scales so this many lines fit
-const SCROLL_SPEED = 0.9; // map pixels per screen ms with the arrow keys
+const SCROLL_SPEED = 0.7; // map pixels per ms with the arrow keys or the screen edge
 const ORDER = { move: 6, attack: 14, patrol: 152, gather: 79, repair: 34 };
-const RACE_NAMES = ['저그', '테란', '프로토스'];
-
-const $ = (id) => document.getElementById(id);
+const RACES = ['zerg', 'terran', 'protoss'];
 
 // Solo play: whatever the player commands runs on the next frame.
 export class SoloLockstep {
@@ -20,38 +19,47 @@ export class SoloLockstep {
 }
 
 export class Game {
-  constructor({ engine, sound, me, slots, lockstep, onEnd }) {
-    Object.assign(this, { engine, sound, me, slots, lockstep, onEnd });
-    this.canvas = $('view');
+  constructor({ engine, ui, sound, me, slots, lockstep, race = 1, onEnd }) {
+    Object.assign(this, { engine, ui, sound, me, slots, lockstep, race, onEnd });
+    this.canvas = document.getElementById('view');
+    this.canvas.width = SCREEN.w;
+    this.canvas.height = SCREEN.h;
     this.ctx = this.canvas.getContext('2d');
-    this.mini = $('minimap');
-    this.miniCtx = this.mini.getContext('2d');
+    this.ctx.imageSmoothingEnabled = false;
+    this.image = new ImageData(SCREEN.w, SCREEN.h);
+    this.map = document.createElement('canvas');
     this.view = { x: 0, y: 0 };
     this.keys = new Set();
     this.mode = null; // { kind: 'order', order } | { kind: 'build', type } while picking a target
     this.menu = null; // 'build' while the SCV build menu is open
     this.drag = null;
     this.markers = [];
-    this.notices = [];
+    this.messages = [];
     this.selection = [];
+    this.buttons = [];
+    this.hoverPos = -1;
+    this.pressedPos = -1;
     this.running = false;
     this.waiting = false;
     this.lastClick = { t: 0, x: 0, y: 0 };
     this.listeners = [];
+    this.ui.setRace(RACES[race]);
   }
 
   start() {
     const home = this.engine.startLocation(this.me);
     this.resize();
     this.center(home.x, home.y);
-    this.mini.width = this.engine.mapTileWidth;
-    this.mini.height = this.engine.mapTileHeight;
-    this.miniImage = new ImageData(this.mini.width, this.mini.height);
+    this.map.width = this.engine.mapTileWidth;
+    this.map.height = this.engine.mapTileHeight;
+    this.mapCtx = this.map.getContext('2d');
+    this.miniImage = new ImageData(this.map.width, this.map.height);
     this.bindInput();
     this.running = true;
     this.last = performance.now();
     this.acc = 0;
     this.lastUi = 0;
+    this.updateState();
     requestAnimationFrame((t) => this.tick(t));
   }
 
@@ -59,6 +67,7 @@ export class Game {
     this.running = false;
     for (const [target, type, fn, opts] of this.listeners) target.removeEventListener(type, fn, opts);
     this.listeners = [];
+    this.canvas.style.cursor = '';
   }
 
   on(target, type, fn, opts) {
@@ -83,8 +92,8 @@ export class Game {
     }
     if (steps === 8) this.acc = 0;
     this.scroll(dt);
+    if (now - this.lastUi > 100) { this.lastUi = now; this.updateState(); }
     this.draw(now);
-    if (now - this.lastUi > 100) { this.lastUi = now; this.updateUi(); }
     requestAnimationFrame((t) => this.tick(t));
   }
 
@@ -102,32 +111,30 @@ export class Game {
     if (bytes) this.lockstep.submit(bytes);
   }
 
-  // ---- view ----
+  // ---- screen ----
 
+  // The 640x480 screen is scaled to fit the window, keeping 4:3 (black bars on the sides).
   resize() {
-    const w = window.innerWidth, h = window.innerHeight;
-    this.scale = Math.max(1, h / VIEW_LINES);
-    const vw = Math.round(w / this.scale), vh = Math.round(h / this.scale);
-    if (this.canvas.width !== vw || this.canvas.height !== vh) {
-      this.canvas.width = vw;
-      this.canvas.height = vh;
-      this.image = new ImageData(vw, vh);
-    }
-    document.documentElement.style.setProperty('--ui-scale', String(this.scale));
+    const scale = Math.min(window.innerWidth / SCREEN.w, window.innerHeight / SCREEN.h);
+    if (scale === this.scale) return;
+    this.scale = scale;
+    this.canvas.style.width = `${Math.floor(SCREEN.w * scale)}px`;
+    this.canvas.style.height = `${Math.floor(SCREEN.h * scale)}px`;
+    this.cursorKey = null;
   }
 
   center(x, y) {
-    this.view.x = x - this.canvas.width / 2;
-    this.view.y = y - (this.canvas.height - 110) / 2;
+    this.view.x = x - SCREEN.w / 2;
+    this.view.y = y - (SCREEN.h - 120) / 2;
   }
 
-  toWorld(e) {
+  // Page position -> screen pixel (0-639, 0-479).
+  toScreen(e) {
     const r = this.canvas.getBoundingClientRect();
-    return {
-      x: Math.round(this.view.x + (e.clientX - r.left) * this.canvas.width / r.width),
-      y: Math.round(this.view.y + (e.clientY - r.top) * this.canvas.height / r.height),
-    };
+    return { x: Math.floor((e.clientX - r.left) * SCREEN.w / r.width), y: Math.floor((e.clientY - r.top) * SCREEN.h / r.height) };
   }
+
+  toWorld(p) { return { x: Math.round(this.view.x + p.x), y: Math.round(this.view.y + p.y) }; }
 
   scroll(dt) {
     let dx = 0, dy = 0;
@@ -136,15 +143,16 @@ export class Game {
     if (this.keys.has('ArrowUp')) dy -= 1;
     if (this.keys.has('ArrowDown')) dy += 1;
     // Screen-edge scrolling, only in full screen where the edge is the monitor's.
+    this.edge = null;
     if (document.fullscreenElement && this.pointer && !this.drag) {
-      const m = 2;
-      if (this.pointer.x <= m) dx -= 1;
-      if (this.pointer.x >= window.innerWidth - 1 - m) dx += 1;
-      if (this.pointer.y <= m) dy -= 1;
-      if (this.pointer.y >= window.innerHeight - 1 - m) dy += 1;
+      const p = this.pointer;
+      const ex = p.x <= 1 ? -1 : p.x >= SCREEN.w - 2 ? 1 : 0, ey = p.y <= 1 ? -1 : p.y >= SCREEN.h - 2 ? 1 : 0;
+      dx += ex;
+      dy += ey;
+      if (ex || ey) this.edge = ['ul', 'u', 'ur', 'l', '', 'r', 'dl', 'd', 'dr'][(ey + 1) * 3 + ex + 1];
     }
-    this.view.x += dx * SCROLL_SPEED * dt;
-    this.view.y += dy * SCROLL_SPEED * dt;
+    this.view.x += Math.sign(dx) * SCROLL_SPEED * dt;
+    this.view.y += Math.sign(dy) * SCROLL_SPEED * dt;
   }
 
   draw(now) {
@@ -167,166 +175,108 @@ export class Game {
       ctx.stroke();
     }
 
+    // Building placement: the footprint in green where it fits, red where it does not.
+    if (this.mode?.kind === 'build' && this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
+      const w = this.toWorld(this.pointer);
+      const t = this.engine.unitType(this.mode.type);
+      const tx = Math.round((w.x - t.w / 2) / 32), ty = Math.round((w.y - t.h / 2) / 32);
+      const tw = Math.ceil(t.w / 32), th = Math.ceil(t.h / 32);
+      const ok = this.engine.canPlace(this.mode.type, tx, ty);
+      ctx.fillStyle = ok ? 'rgba(24,252,16,0.35)' : 'rgba(252,16,16,0.4)';
+      ctx.fillRect(sx(tx * 32), sy(ty * 32), tw * 32, th * 32);
+    }
+
     if (this.drag?.moved) {
       ctx.strokeStyle = '#18fc10';
       ctx.lineWidth = 1;
-      const x0 = Math.min(this.drag.x0, this.drag.x1), y0 = Math.min(this.drag.y0, this.drag.y1);
-      ctx.strokeRect(sx(x0) + 0.5, sy(y0) + 0.5, Math.abs(this.drag.x1 - this.drag.x0), Math.abs(this.drag.y1 - this.drag.y0));
-    }
-
-    // Building placement: the footprint in green where it fits, red where it does not.
-    if (this.mode?.kind === 'build' && this.pointerWorld) {
-      const t = this.engine.unitType(this.mode.type);
-      const tx = Math.round((this.pointerWorld.x - t.w / 2) / 32), ty = Math.round((this.pointerWorld.y - t.h / 2) / 32);
-      const tw = Math.ceil(t.w / 32), th = Math.ceil(t.h / 32);
-      const ok = this.engine.canPlace(this.mode.type, tx, ty);
-      this.mode.tile = { tx, ty, ok };
-      ctx.fillStyle = ok ? 'rgba(24,252,16,0.35)' : 'rgba(252,16,16,0.4)';
-      ctx.fillRect(sx(tx * 32), sy(ty * 32), tw * 32, th * 32);
-      ctx.strokeStyle = ok ? '#18fc10' : '#fc1010';
-      ctx.strokeRect(sx(tx * 32) + 0.5, sy(ty * 32) + 0.5, tw * 32 - 1, th * 32 - 1);
+      const a = { x: sx(Math.min(this.drag.x0, this.drag.x1)), y: sy(Math.min(this.drag.y0, this.drag.y1)) };
+      ctx.strokeRect(a.x + 0.5, a.y + 0.5, Math.abs(this.drag.x1 - this.drag.x0), Math.abs(this.drag.y1 - this.drag.y0));
     }
 
     this.engine.renderMinimap(this.miniImage);
-    this.miniCtx.putImageData(this.miniImage, 0, 0);
-    // The minimap's view rectangle.
-    this.miniCtx.strokeStyle = '#fff';
-    this.miniCtx.lineWidth = 1;
-    this.miniCtx.strokeRect(this.view.x / 32 + 0.5, this.view.y / 32 + 0.5, this.canvas.width / 32, this.canvas.height / 32);
-
-    this.canvas.style.cursor = this.mode ? 'crosshair' : '';
-  }
-
-  // ---- panels ----
-
-  notice(text) {
-    this.notices.push({ text, t: performance.now() });
-    this.notices = this.notices.slice(-3);
-    this.renderNotices();
-  }
-
-  renderNotices() {
-    const now = performance.now();
-    this.notices = this.notices.filter((n) => now - n.t < 4000);
-    $('notices').replaceChildren(...this.notices.map((n) => Object.assign(document.createElement('div'), { textContent: n.text })));
-  }
-
-  updateUi() {
-    const p = this.engine.player(this.me);
-    this.playerState = p;
-    $('minerals').textContent = p.minerals;
-    $('gas').textContent = p.gas;
-    $('supply').textContent = `${p.supplyUsed}/${p.supplyMax}`;
-    $('supply').classList.toggle('full', p.supplyUsed >= p.supplyMax);
-    this.selection = this.engine.selection();
-    this.renderInfo();
-    this.renderCard();
-    this.renderNotices();
+    this.mapCtx.putImageData(this.miniImage, 0, 0);
+    this.messages = this.messages.filter((m) => now - m.t < 6000);
     const secs = Math.floor(this.engine.frame * FRAME_MS / 1000);
-    $('clock').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    $('waiting').hidden = !this.waiting;
+    this.ui.draw(ctx, {
+      me: this.me,
+      raceIndex: this.race,
+      player: this.playerState,
+      selection: this.selection,
+      buttons: this.buttons,
+      hoverPos: this.hoverPos,
+      pressedPos: this.pressedPos,
+      activeButton: this.mode?.button,
+      minimap: this.map,
+      minimapSize: { w: this.map.width, h: this.map.height },
+      viewRect: { x: this.view.x, y: this.view.y, w: SCREEN.w, h: SCREEN.h },
+      messages: [
+        ...this.messages,
+        ...(this.waiting ? [{ text: 'Waiting for opponent...', color: COLOR.yellow }] : []),
+        ...(this.banner ? [{ text: this.banner, color: COLOR.yellow }] : []),
+      ],
+      clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
+      drawIcon: (c, frame, x, y, row, w, h) => {
+        const icon = this.engine.icon(frame, row);
+        if (w) c.drawImage(icon, (icon.width - w) / 2, (icon.height - h) / 2, w, h, x, y, w, h);
+        else c.drawImage(icon, x, y);
+      },
+    });
+    this.updateCursor(now);
+  }
+
+  // The original cursors: arrow, green/yellow/red magnifier over own/neutral/enemy units,
+  // crosshair while targeting, scroll arrows at the edge.
+  updateCursor(now) {
+    let name = 'arrow';
+    if (this.edge) name = `scroll${this.edge}`;
+    else if (this.mode) name = this.mode.kind === 'build' ? 'arrow' : 'targg';
+    else if (this.drag?.moved) name = 'drag';
+    else if (this.hoverUnit) name = this.hoverUnit.owner === this.me ? 'magg' : this.hoverUnit.owner >= 8 ? 'magy' : 'magr';
+    const frames = this.ui.meta.sheets[`cursor-${name}`]?.frames.length || 1;
+    const frame = Math.floor(now / 100) % frames;
+    const key = `${name}:${frame}:${this.scale}`;
+    if (key !== this.cursorKey) {
+      this.cursorKey = key;
+      this.canvas.style.cursor = this.ui.cursorCss(name, frame, this.scale);
+    }
+  }
+
+  // ---- state for the panels ----
+
+  updateState() {
+    this.playerState = this.engine.player(this.me);
+    this.selection = this.engine.selection();
+    const mine = this.selection.filter((u) => u.owner === this.me);
+    this.buttons = mine.length && mine.length === this.selection.length ? commandCard(mine, this.menu, this) : [];
+    if (this.pointer && !this.ui.onConsole(this.pointer.x, this.pointer.y)) {
+      const w = this.toWorld(this.pointer);
+      this.hoverUnit = this.engine.unitAt(w.x, w.y);
+    } else {
+      this.hoverUnit = null;
+    }
     this.checkEnd();
   }
 
-  renderInfo() {
-    const sel = this.selection;
-    const box = $('info');
-    if (!sel.length) { box.replaceChildren(); return; }
-    if (sel.length > 1) {
-      // Several units: their icons with health colour, like the original's wireframe grid.
-      box.replaceChildren(...sel.map((u) => {
-        const c = document.createElement('div');
-        c.className = 'cell';
-        c.append(this.iconCopy(u.type));
-        const hp = u.hp / u.maxHp;
-        c.style.setProperty('--hp', hp > 0.66 ? '#18fc10' : hp > 0.33 ? '#fcfc38' : '#fc1010');
-        return c;
-      }));
-      box.className = 'group';
-      return;
-    }
-    const u = sel[0];
-    box.className = 'single';
-    const lines = [];
-    lines.push(`<b>${names[u.type] ?? `유닛 ${u.type}`}</b>`);
-    if (u.resources >= 0) lines.push(`남은 자원 ${u.resources}`);
-    else if (u.maxHp > 0) lines.push(`${u.hp} / ${u.maxHp}`);
-    if (u.owner !== this.me && u.owner < 8) lines.push('<span class="enemy">상대</span>');
-    if (u.progress >= 0) {
-      const what = u.completed ? (u.queue[0] != null ? names[u.queue[0]] : '') : '건설 중';
-      lines.push(`<div class="progress"><i style="width:${u.progress}%"></i></div><small>${what}</small>`);
-    }
-    box.innerHTML = lines.join('<br>');
-    if (u.queue.length && u.owner === this.me) {
-      const q = document.createElement('div');
-      q.className = 'queue';
-      u.queue.forEach((type, i) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.title = '취소';
-        b.append(this.iconCopy(type));
-        b.onclick = () => this.send(this.engine.cmd.cancelQueue(i));
-        q.append(b);
-      });
-      box.append(q);
-    }
+  notice(text) {
+    this.messages.push({ text, t: performance.now() });
+    this.messages = this.messages.slice(-4);
   }
 
-  // A fresh canvas with an icon on it (a canvas element can only sit in one place).
-  iconCopy(frame, row = 0, set = 0) {
-    const icon = this.engine.icon(frame, row, set);
-    const c = document.createElement('canvas');
-    c.width = icon.width;
-    c.height = icon.height;
-    c.getContext('2d').drawImage(icon, 0, 0);
-    return c;
-  }
-
-  // The 3x3 command card for what is selected.
-  buttons() {
-    const mine = this.selection.filter((u) => u.owner === this.me);
-    if (!mine.length || mine.length !== this.selection.length) return [];
-    return commandCard(mine, this.menu, this);
-  }
-
-  renderCard() {
-    const list = this.buttons();
-    this.cardButtons = list;
-    const card = $('card');
-    const cells = [];
-    for (let i = 0; i < 9; i++) {
-      const b = list.find((x) => x.pos === i);
-      const el = document.createElement('button');
-      el.type = 'button';
-      if (b) {
-        const enabled = b.enabled !== false;
-        el.append(this.iconCopy(b.icon, enabled ? 0 : 1));
-        el.title = `${b.label} (${b.key})${b.cost ? ` - ${b.cost}` : ''}`;
-        el.onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); this.press(b); };
-        el.classList.toggle('active', !!(this.mode && this.mode.button === b.id));
-      } else {
-        el.disabled = true;
-      }
-      cells.push(el);
-    }
-    card.replaceChildren(...cells);
-  }
-
-  press(b) {
-    this.sound.unlock();
-    if (b.enabled === false) { if (b.why) this.notice(b.why); return; }
-    b.run();
-    this.updateUi();
+  needResources(type) {
+    const t = this.engine.unitType(type), p = this.playerState || this.engine.player(this.me);
+    if (p.minerals < t.minerals) return MESSAGES.minerals;
+    if (p.gas < t.gas) return MESSAGES.gas;
+    if (t.supply > 0 && p.supplyUsed + t.supply > p.supplyMax) return MESSAGES.supply;
+    return null;
   }
 
   // ---- commands from buttons and clicks ----
 
-  needResources(type) {
-    const t = this.engine.unitType(type), p = this.playerState || this.engine.player(this.me);
-    if (p.minerals < t.minerals) return '미네랄이 부족합니다.';
-    if (p.gas < t.gas) return '베스핀 가스가 부족합니다.';
-    if (t.supply > 0 && p.supplyUsed + t.supply > p.supplyMax) return '보급품이 부족합니다. 서플라이 디포를 더 지으세요.';
-    return null;
+  press(b) {
+    this.sound.unlock();
+    if (b.enabled === false) return;
+    b.run();
+    this.updateState();
   }
 
   target(kind, extra) {
@@ -343,7 +293,7 @@ export class Game {
     } else if (m.kind === 'build') {
       const t = this.engine.unitType(m.type);
       const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
-      if (!this.engine.canPlace(m.type, tx, ty)) { this.notice('여기에는 지을 수 없습니다.'); this.mode = m; return; }
+      if (!this.engine.canPlace(m.type, tx, ty)) { this.notice(MESSAGES.location); this.mode = m; return; }
       const why = this.needResources(m.type);
       if (why) { this.notice(why); return; }
       this.send(this.engine.cmd.build(m.type, tx, ty));
@@ -376,30 +326,60 @@ export class Game {
     const n = this.engine.select(world0.x, world0.y, world1.x, world1.y, shift, sameType);
     this.menu = null;
     this.send(this.engine.cmd.select());
-    this.selection = this.engine.selection();
+    this.updateState();
     if (n) this.voice('what');
-    this.renderInfo();
-    this.renderCard();
   }
 
   // ---- input ----
+
+  minimapWorld(p) {
+    const r = this.ui.minimapRect;
+    if (!r) return null;
+    const x = Math.max(0, Math.min(r.w - 1, p.x - r.x)), y = Math.max(0, Math.min(r.h - 1, p.y - r.y));
+    return { x: Math.round(x / r.scale * 32), y: Math.round(y / r.scale * 32) };
+  }
+
+  inMinimap(p) {
+    const r = this.ui.minimapRect;
+    return r && p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+  }
 
   bindInput() {
     const view = this.canvas;
     this.on(window, 'resize', () => this.resize());
     this.on(view, 'contextmenu', (e) => e.preventDefault());
     this.on(window, 'pointermove', (e) => {
-      this.pointer = { x: e.clientX, y: e.clientY };
-      this.pointerWorld = this.toWorld(e);
+      const p = this.toScreen(e);
+      this.pointer = p;
+      this.hoverPos = this.ui.cardAt(p.x, p.y);
+      if (this.hoverPos >= 0 && !this.buttons.some((b) => b.pos === this.hoverPos)) this.hoverPos = -1;
+      if (this.miniDrag) { const w = this.minimapWorld(p); this.center(w.x, w.y); }
       if (this.drag) {
-        this.drag.x1 = this.pointerWorld.x;
-        this.drag.y1 = this.pointerWorld.y;
+        const w = this.toWorld(p);
+        this.drag.x1 = w.x;
+        this.drag.y1 = w.y;
         if (Math.abs(this.drag.x1 - this.drag.x0) > 4 || Math.abs(this.drag.y1 - this.drag.y0) > 4) this.drag.moved = true;
       }
     });
     this.on(view, 'pointerdown', (e) => {
+      e.preventDefault();
       this.sound.unlock();
-      const w = this.toWorld(e);
+      const p = this.toScreen(e);
+      this.pointer = p;
+      if (this.inMinimap(p)) {
+        const w = this.minimapWorld(p);
+        if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
+        if (this.mode) { this.issueAt(w, e.shiftKey); return; }
+        view.setPointerCapture(e.pointerId);
+        this.miniDrag = true;
+        this.center(w.x, w.y);
+        return;
+      }
+      const pos = this.ui.cardAt(p.x, p.y);
+      const button = this.buttons.find((b) => b.pos === pos);
+      if (button && e.button === 0) { this.pressedPos = pos; view.setPointerCapture(e.pointerId); return; }
+      if (this.ui.onConsole(p.x, p.y)) return;
+      const w = this.toWorld(p);
       if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
       if (e.button !== 0) return;
       if (this.mode) { this.issueAt(w, e.shiftKey); return; }
@@ -407,7 +387,17 @@ export class Game {
       this.drag = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, moved: false };
     });
     this.on(view, 'pointerup', (e) => {
-      if (e.button !== 0 || !this.drag) return;
+      if (e.button !== 0) return;
+      this.miniDrag = false;
+      if (this.pressedPos >= 0) {
+        const p = this.toScreen(e);
+        const pos = this.pressedPos;
+        this.pressedPos = -1;
+        const b = this.buttons.find((x) => x.pos === pos);
+        if (b && this.ui.cardAt(p.x, p.y) === pos) this.press(b);
+        return;
+      }
+      if (!this.drag) return;
       const d = this.drag;
       this.drag = null;
       const now = performance.now();
@@ -415,26 +405,6 @@ export class Game {
       this.lastClick = { t: now, x: d.x0, y: d.y0 };
       this.selectAt({ x: d.x0, y: d.y0 }, d.moved ? { x: d.x1, y: d.y1 } : { x: d.x0, y: d.y0 }, e.shiftKey, dbl || e.ctrlKey);
     });
-
-    // Minimap: left button moves the view (drag to keep moving), right button orders there.
-    const miniWorld = (e) => {
-      const r = this.mini.getBoundingClientRect();
-      return { x: Math.round((e.clientX - r.left) / r.width * this.engine.mapWidth), y: Math.round((e.clientY - r.top) / r.height * this.engine.mapHeight) };
-    };
-    this.on(this.mini, 'contextmenu', (e) => e.preventDefault());
-    this.on(this.mini, 'pointerdown', (e) => {
-      e.preventDefault();
-      this.sound.unlock();
-      const w = miniWorld(e);
-      if (e.button === 2) { this.rightClick(w, e.shiftKey); return; }
-      if (this.mode) { this.issueAt(w, e.shiftKey); return; }
-      this.mini.setPointerCapture(e.pointerId);
-      this.miniDrag = true;
-      this.center(w.x, w.y);
-    });
-    this.on(this.mini, 'pointermove', (e) => { if (this.miniDrag) { const w = miniWorld(e); this.center(w.x, w.y); } });
-    this.on(this.mini, 'pointerup', () => { this.miniDrag = false; });
-
     this.on(window, 'keydown', (e) => this.key(e, true));
     this.on(window, 'keyup', (e) => this.key(e, false));
     this.on(window, 'blur', () => this.keys.clear());
@@ -450,9 +420,9 @@ export class Game {
     if (!down) return;
     if (e.code === 'Escape') {
       if (this.mode) { this.mode = null; return; }
-      const b = this.cardButtons?.find((x) => x.key === 'Esc');
+      const b = this.buttons.find((x) => x.key === 'Esc');
       if (b) { this.press(b); return; }
-      if (this.menu) { this.menu = null; this.renderCard(); return; }
+      if (this.menu) { this.menu = null; this.updateState(); return; }
       this.onEnd?.('menu');
       return;
     }
@@ -460,41 +430,34 @@ export class Game {
     if (digit != null) {
       e.preventDefault();
       const n = Number(digit);
-      if (e.ctrlKey || e.metaKey) { this.send(this.engine.cmd.group(0, n)); this.notice(`${n}번 부대 지정`); } else if (e.shiftKey) this.send(this.engine.cmd.group(2, n));
+      if (e.ctrlKey || e.metaKey) this.send(this.engine.cmd.group(0, n));
+      else if (e.shiftKey) this.send(this.engine.cmd.group(2, n));
       else {
         this.send(this.engine.cmd.group(1, n));
         // Pressing the number twice quickly jumps the view to the group.
         const now = performance.now();
-        if (this.lastGroup?.n === n && now - this.lastGroup.t < 400) this.jumpToSelection = true;
+        const jump = this.lastGroup?.n === n && now - this.lastGroup.t < 400;
         this.lastGroup = { n, t: now };
         setTimeout(() => {
-          this.selection = this.engine.selection();
-          if (this.jumpToSelection && this.selection[0]) this.centerOnSelection();
-          this.jumpToSelection = false;
+          this.updateState();
+          if (jump && this.selection[0]) this.center(this.selection[0].x, this.selection[0].y);
         }, FRAME_MS * 3);
       }
       return;
     }
     const letter = e.code.match(/^Key([A-Z])$/)?.[1];
     if (letter && !e.ctrlKey && !e.metaKey) {
-      const b = this.cardButtons?.find((x) => x.key === letter);
+      const b = this.buttons.find((x) => x.key === letter);
       if (b) { e.preventDefault(); this.press(b); }
     }
-  }
-
-  centerOnSelection() {
-    const u = this.selection[0];
-    if (!u) return;
-    this.center(u.x, u.y);
   }
 
   // ---- end of game ----
 
   checkEnd() {
-    if (this.ended) return;
+    if (this.ended || this.engine.frame < 24) return;
     const mine = this.engine.player(this.me);
     const others = this.slots.filter((s) => s !== this.me).map((s) => this.engine.player(s));
-    if (this.engine.frame < 24) return;
     if (mine.units === 0) this.finish(false);
     else if (others.length && others.every((p) => p.units === 0)) this.finish(true);
   }
@@ -504,5 +467,3 @@ export class Game {
     this.onEnd?.(won ? 'victory' : 'defeat');
   }
 }
-
-export { ORDER, RACE_NAMES };

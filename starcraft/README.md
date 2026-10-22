@@ -20,6 +20,7 @@ node starcraft/tools/casc.mjs extract "$SC" ~/sc-assets 'arr/' 'scripts/' ...   
 | `data/<타일셋>.bin.gz` + `.idx` | 타일셋 그림, 팔레트, 조명표 (맵의 타일셋만 받음) |
 | `sound/**.wav` | 효과음·음성 (원작 22kHz, 처음 재생할 때 받음) |
 | `maps/**` + `maps.json` | 맵 (.scm/.scx 그대로) |
+| `ui/*.png` + `ui.json` | 원작 화면 그림: 콘솔, 와이어프레임, 버튼 틀, 자원 아이콘, 커서(리마스터 SD의 DDS를 PNG로), 비트맵 글꼴(.fnt), 유닛 이름(stat_txt.tbl) |
 
 ## 엔진
 
@@ -48,6 +49,14 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 - 1초에 양쪽 합쳐 약 24개 메시지입니다. 10분 한 판에 약 1만 5천 개로, Supabase 무료 한도(월 200만 개) 안입니다.
 - 탭을 다른 데로 돌리면 브라우저가 그 탭을 멈춰서 상대도 기다리게 됩니다.
 
+## 화면
+
+원작처럼 640x480 화면 하나를 그리고, 창 크기에 맞춰 4:3 비율로 늘립니다(양옆 검은 띠).
+지도 위에 종족별 콘솔 그림을 얹고, 미니맵(128x128), 상태창(와이어프레임, 이름, 체력, 생산 대기열과 진행 막대),
+명령 카드(버튼 틀 위 아이콘, 누르면 1픽셀 밀림, 올리면 밝아짐, 위에 설명), 오른쪽 위 자원, 왼쪽 아래 메시지를
+모두 원작 그림과 비트맵 글꼴로 그립니다. 글자는 원작과 같은 영어입니다. 커서도 원작 것(화살표, 아군·적·중립 돋보기,
+조준, 화면 끝 스크롤)입니다.
+
 ## 조작
 
 | 입력 | 동작 |
@@ -70,9 +79,11 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 | `js/game.js` | 게임 루프(Fastest, 프레임당 42ms), 화면, 입력, 패널, 혼자 하기용 락스텝 |
 | `js/lockstep.js` | 온라인 락스텝(턴, 재전송, 체크섬) |
 | `js/net.js` | Supabase Realtime 방·대기실 연결 (Worms와 같음) |
-| `js/units.js` | 유닛 이름, 명령 카드(버튼·단축키·아이콘) |
+| `js/console-ui.js` | 콘솔·미니맵·상태창·명령 카드·자원·글자·커서 그리기 |
+| `js/units.js` | 명령 카드(버튼·단축키·아이콘·설명), 원작 안내 문구 |
 | `js/sound.js` | 효과음·음성 재생 (Web Audio, 동시 8개) |
 | `engine/game.cpp` | 엔진 쪽 함수: 시작, 프레임, 명령, 그리기, 안개, 미니맵, 선택 |
 | `engine/platform.cpp` | SDL 대신 메모리 화면 |
 | `tools/casc.mjs` | 리마스터 CASC 저장소 읽기 |
 | `tools/pack-data.mjs` | 데이터 묶기 |
+| `tools/image-formats.mjs` | DDS(DXT1/5), .dds.grp, .fnt 글꼴, PCX 읽기, PNG 쓰기 |
