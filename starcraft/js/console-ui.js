@@ -8,9 +8,8 @@ export const SCREEN = { w: 640, h: 480 };
 export const CONSOLE_Y = 292;
 export const MINIMAP = { x: 6, y: 348, w: 128, h: 128 };
 const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
-// Where the console art is widened on wide screens (columns that repeat cleanly in all three races).
-const SPLIT = [168, 501];
-const SLICE = 12;
+// Per race: the console art column where the status panel is widened, and how many columns repeat.
+const WIDEN = { terran: [274, 1], protoss: [238, 1], zerg: [308, 24] };
 const STATUS = { x: 154, y: 387, w: 250, h: 90 };
 export const PORTRAIT = { x: 413, y: 410, w: 60, h: 56 };
 // Text colours as the fonts were baked (tfontgam.pcx order).
@@ -43,26 +42,20 @@ export class ConsoleUI {
     this.images = {};
     this.tinted = new Map();
     this.race = 'terran';
-    this.width = SCREEN.w; // screen width; wider screens widen the console (see layout)
+    this.width = SCREEN.w; // screen width (see extra)
   }
 
-  // On a screen wider than 640 the console is widened at two columns of its art (inside the
-  // status panel's left side and between the portrait and the command card), so the minimap stays
-  // at the left edge, the command card at the right edge and the status panel grows in between.
-  get layout() {
-    const extra = Math.max(0, this.width - SCREEN.w);
-    const gap = Math.floor(extra / 2);
-    return { extra, gap, center: Math.floor(extra / 2) };
-  }
+  // On a screen wider than 640 the console keeps its original size, the minimap at the left edge
+  // and the command card at the right edge; the status panel's black window grows in between, at a
+  // column (or a repeated slice, for the Zerg's ribbed frame) where the art is the same left to right.
+  get extra() { return Math.max(0, this.width - SCREEN.w); }
 
-  // Screen x -> console art x (for hit tests against the art's shape).
+  // Screen x -> console art x.
   artX(x) {
-    const { extra, gap } = this.layout;
-    if (x < SPLIT[0]) return x;
-    if (x < SPLIT[0] + gap) return SPLIT[0];
-    if (x < SPLIT[1] + gap) return x - gap;
-    if (x < SPLIT[1] + extra) return SPLIT[1];
-    return x - extra;
+    const [col] = WIDEN[this.race];
+    if (x < col) return x;
+    if (x < col + this.extra) return col;
+    return x - this.extra;
   }
 
   get names() { return this.meta.names; }
@@ -176,36 +169,34 @@ export class ConsoleUI {
   draw(ctx, s) {
     const art = this.meta.console[this.race];
     const img = this.images[art.console.file];
-    const { extra, gap } = this.layout;
+    const extra = this.extra, h = img.height;
+    const [col, slice] = WIDEN[this.race];
+    this.drawResources(ctx, s);
     // The game clock sits on top of the portrait's frame, as in Remastered (drawn first, so the
     // console covers its foot).
     if (s.clock) {
       const t = art.time;
-      const cx = PORTRAIT.x + PORTRAIT.w / 2 + gap;
+      const cx = PORTRAIT.x + PORTRAIT.w / 2 + extra;
       const y = CONSOLE_Y + (this.race === 'protoss' ? 77 : 85) - t.h;
       ctx.drawImage(this.images[t.file], Math.round(cx - t.w / 2), y);
       this.text(ctx, s.clock, cx, y + (t.h > 32 ? 28 : 9), COLOR.white, 'font10', 'center');
     }
-    // The art in three pieces, the gaps filled by repeating a slice of the art next to each split.
-    const [a, b] = SPLIT, h = img.height;
-    const fill = (src, x, w) => {
-      for (let i = 0; i < w; i += SLICE) ctx.drawImage(img, src, 0, Math.min(SLICE, w - i), h, x + i, CONSOLE_Y, Math.min(SLICE, w - i), h);
-    };
-    ctx.drawImage(img, 0, 0, a, h, 0, CONSOLE_Y, a, h);
-    fill(a, a, gap);
-    ctx.drawImage(img, a, 0, b - a, h, a + gap, CONSOLE_Y, b - a, h);
-    fill(b - SLICE, b + gap, extra - gap);
-    ctx.drawImage(img, b, 0, img.width - b, h, b + extra, CONSOLE_Y, img.width - b, h);
+    ctx.drawImage(img, 0, 0, col, h, 0, CONSOLE_Y, col, h);
+    for (let i = 0; i < extra; i += slice) {
+      const w = Math.min(slice, extra - i);
+      ctx.drawImage(img, col, 0, w, h, col + i, CONSOLE_Y, w, h);
+    }
+    ctx.drawImage(img, col, 0, img.width - col, h, col + extra, CONSOLE_Y, img.width - col, h);
     this.drawMinimap(ctx, s);
     this.drawMessages(ctx, s);
-    this.drawResources(ctx, s);
+    // The status panel's contents in the middle of its widened window.
     ctx.save();
-    ctx.translate(gap, 0);
-    this.drawPortrait(ctx, s.portrait);
+    ctx.translate(extra >> 1, 0);
     this.drawStatus(ctx, s);
     ctx.restore();
     ctx.save();
     ctx.translate(extra, 0);
+    this.drawPortrait(ctx, s.portrait);
     this.drawCard(ctx, s);
     ctx.restore();
   }
@@ -324,7 +315,7 @@ export class ConsoleUI {
   }
 
   passengerAt(x, y) {
-    x -= this.layout.gap;
+    x -= this.extra >> 1;
     return this.passengerRects?.find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)?.uid ?? null;
   }
 
@@ -341,7 +332,7 @@ export class ConsoleUI {
   }
 
   cardAt(x, y) {
-    x -= this.layout.extra;
+    x -= this.extra;
     for (let pos = 0; pos < 9; pos++) {
       const r = this.cardSlot(pos);
       if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return pos;
@@ -394,7 +385,7 @@ export class ConsoleUI {
     const items = [[0, String(p.minerals), COLOR.green], [1 + race, String(p.gas), COLOR.green],
       [4 + race, `${p.supplyUsed}/${p.supplyMax}`, p.supplyUsed > p.supplyMax ? COLOR.red : COLOR.green]];
     // Each counter is an icon and a number in a fixed column, as in the original.
-    const right = this.width - SCREEN.w;
+    const right = this.width - SCREEN.w; // counters keep to the screen's right edge
     const cols = [436 + right, 504 + right, 572 + right];
     items.forEach(([icon, text, color], i) => {
       this.frame(ctx, 'icons', icon, cols[i], 2);
@@ -426,13 +417,13 @@ export class ConsoleUI {
   }
 
   dialogButtonAt(d, px, py) {
-    px -= this.layout.center;
+    px -= Math.floor((this.width - SCREEN.w) / 2);
     return this.dialogLayout(d).buttons.findIndex((b) => px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h);
   }
 
   drawDialog(ctx, d, hover) {
     ctx.save();
-    ctx.translate(this.layout.center, 0);
+    ctx.translate(Math.floor((this.width - SCREEN.w) / 2), 0);
     this.drawDialogBox(ctx, d, hover);
     ctx.restore();
   }
