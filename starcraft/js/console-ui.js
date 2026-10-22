@@ -8,6 +8,9 @@ export const SCREEN = { w: 640, h: 480 };
 export const CONSOLE_Y = 292;
 export const MINIMAP = { x: 6, y: 348, w: 128, h: 128 };
 const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
+// Where the console art is widened on wide screens (columns that repeat cleanly in all three races).
+const SPLIT = [168, 501];
+const SLICE = 12;
 const STATUS = { x: 154, y: 387, w: 250, h: 90 };
 export const PORTRAIT = { x: 413, y: 410, w: 60, h: 56 };
 // Text colours as the fonts were baked (tfontgam.pcx order).
@@ -40,7 +43,26 @@ export class ConsoleUI {
     this.images = {};
     this.tinted = new Map();
     this.race = 'terran';
-    this.ox = 0; // where the 640-wide console starts on a wider screen
+    this.width = SCREEN.w; // screen width; wider screens widen the console (see layout)
+  }
+
+  // On a screen wider than 640 the console is widened at two columns of its art (inside the
+  // status panel's left side and between the portrait and the command card), so the minimap stays
+  // at the left edge, the command card at the right edge and the status panel grows in between.
+  get layout() {
+    const extra = Math.max(0, this.width - SCREEN.w);
+    const gap = Math.floor(extra / 2);
+    return { extra, gap, center: Math.floor(extra / 2) };
+  }
+
+  // Screen x -> console art x (for hit tests against the art's shape).
+  artX(x) {
+    const { extra, gap } = this.layout;
+    if (x < SPLIT[0]) return x;
+    if (x < SPLIT[0] + gap) return SPLIT[0];
+    if (x < SPLIT[1] + gap) return x - gap;
+    if (x < SPLIT[1] + extra) return SPLIT[1];
+    return x - extra;
   }
 
   get names() { return this.meta.names; }
@@ -58,7 +80,7 @@ export class ConsoleUI {
   }
 
   onConsole(x, y) {
-    x -= this.ox;
+    x = this.artX(x);
     if (y < CONSOLE_Y || y >= SCREEN.h || x < 0 || x >= SCREEN.w) return false;
     return this.consoleAlpha[((y - CONSOLE_Y) * SCREEN.w + x) * 4 + 3] > 0;
   }
@@ -154,34 +176,38 @@ export class ConsoleUI {
   draw(ctx, s) {
     const art = this.meta.console[this.race];
     const img = this.images[art.console.file];
-    // On a wide screen the map shows beside the console down to its frames; below that, black.
-    if (this.ox > 0) {
-      const w = ctx.canvas.width, top = CONSOLE_Y + 56;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, top, this.ox + 2, SCREEN.h - top);
-      ctx.fillRect(this.ox + img.width - 2, top, w - this.ox - img.width + 2, SCREEN.h - top);
-    }
-    ctx.save();
-    ctx.translate(this.ox, 0);
-    this.drawConsole(ctx, s, art, img);
-    ctx.restore();
-  }
-
-  drawConsole(ctx, s, art, img) {
-    // The game clock sits on top of the minimap's frame, as in Remastered.
+    const { extra, gap } = this.layout;
+    // The game clock sits on top of the portrait's frame, as in Remastered (drawn first, so the
+    // console covers its foot).
     if (s.clock) {
       const t = art.time;
-      const y = CONSOLE_Y + (t.h > 32 ? 28 : 20) - t.h;
-      ctx.drawImage(this.images[t.file], 0, y);
-      this.text(ctx, s.clock, 76, y + (t.h > 32 ? 28 : 9), COLOR.white, 'font10', 'center');
+      const cx = PORTRAIT.x + PORTRAIT.w / 2 + gap;
+      const y = CONSOLE_Y + (this.race === 'protoss' ? 77 : 85) - t.h;
+      ctx.drawImage(this.images[t.file], Math.round(cx - t.w / 2), y);
+      this.text(ctx, s.clock, cx, y + (t.h > 32 ? 28 : 9), COLOR.white, 'font10', 'center');
     }
-    ctx.drawImage(img, 0, CONSOLE_Y);
+    // The art in three pieces, the gaps filled by repeating a slice of the art next to each split.
+    const [a, b] = SPLIT, h = img.height;
+    const fill = (src, x, w) => {
+      for (let i = 0; i < w; i += SLICE) ctx.drawImage(img, src, 0, Math.min(SLICE, w - i), h, x + i, CONSOLE_Y, Math.min(SLICE, w - i), h);
+    };
+    ctx.drawImage(img, 0, 0, a, h, 0, CONSOLE_Y, a, h);
+    fill(a, a, gap);
+    ctx.drawImage(img, a, 0, b - a, h, a + gap, CONSOLE_Y, b - a, h);
+    fill(b - SLICE, b + gap, extra - gap);
+    ctx.drawImage(img, b, 0, img.width - b, h, b + extra, CONSOLE_Y, img.width - b, h);
     this.drawMinimap(ctx, s);
+    this.drawMessages(ctx, s);
+    this.drawResources(ctx, s);
+    ctx.save();
+    ctx.translate(gap, 0);
     this.drawPortrait(ctx, s.portrait);
     this.drawStatus(ctx, s);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(extra, 0);
     this.drawCard(ctx, s);
-    this.drawResources(ctx, s);
-    this.drawMessages(ctx, s);
+    ctx.restore();
   }
 
   drawMinimap(ctx, s) {
@@ -198,7 +224,7 @@ export class ConsoleUI {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1;
     ctx.strokeRect(Math.round(ox + v.x / 32 * scale) + 0.5, Math.round(oy + v.y / 32 * scale) + 0.5, Math.round(v.w / 32 * scale), Math.round(v.h / 32 * scale));
-    this.minimapRect = { x: ox + this.ox, y: oy, w: dw, h: dh, scale }; // screen coordinates
+    this.minimapRect = { x: ox, y: oy, w: dw, h: dh, scale };
     // Blinking squares where something happened (attacks, pings).
     for (const p of s.pings || []) {
       if (Math.floor((s.now - p.t) / 150) % 2) continue;
@@ -298,7 +324,7 @@ export class ConsoleUI {
   }
 
   passengerAt(x, y) {
-    x -= this.ox;
+    x -= this.layout.gap;
     return this.passengerRects?.find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)?.uid ?? null;
   }
 
@@ -315,7 +341,7 @@ export class ConsoleUI {
   }
 
   cardAt(x, y) {
-    x -= this.ox;
+    x -= this.layout.extra;
     for (let pos = 0; pos < 9; pos++) {
       const r = this.cardSlot(pos);
       if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return pos;
@@ -368,7 +394,7 @@ export class ConsoleUI {
     const items = [[0, String(p.minerals), COLOR.green], [1 + race, String(p.gas), COLOR.green],
       [4 + race, `${p.supplyUsed}/${p.supplyMax}`, p.supplyUsed > p.supplyMax ? COLOR.red : COLOR.green]];
     // Each counter is an icon and a number in a fixed column, as in the original.
-    const right = (s.screenRight ?? SCREEN.w) - SCREEN.w;
+    const right = this.width - SCREEN.w;
     const cols = [436 + right, 504 + right, 572 + right];
     items.forEach(([icon, text, color], i) => {
       this.frame(ctx, 'icons', icon, cols[i], 2);
@@ -378,7 +404,7 @@ export class ConsoleUI {
 
   drawMessages(ctx, s) {
     const lines = s.messages;
-    const bottom = CONSOLE_Y - 16 - (s.chat ? 18 : 0); // above the clock
+    const bottom = CONSOLE_Y - (s.chat ? 18 : 0);
     lines.forEach((m, i) => this.text(ctx, m.text, 10, bottom - 14 * (lines.length - i) + 4, m.color ?? COLOR.white));
     if (s.chat) {
       const cursor = Math.floor(s.now / 400) % 2 ? '_' : '';
@@ -400,13 +426,13 @@ export class ConsoleUI {
   }
 
   dialogButtonAt(d, px, py) {
-    px -= this.ox;
+    px -= this.layout.center;
     return this.dialogLayout(d).buttons.findIndex((b) => px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h);
   }
 
   drawDialog(ctx, d, hover) {
     ctx.save();
-    ctx.translate(this.ox, 0);
+    ctx.translate(this.layout.center, 0);
     this.drawDialogBox(ctx, d, hover);
     ctx.restore();
   }

@@ -18,6 +18,8 @@ const ADVISOR = {
   base: ['zerg/advisor/zadupd00.wav', 'terran/advisor/tadupd00.wav', 'protoss/advisor/padupd00.wav'],
   forces: ['zerg/advisor/zadupd01.wav', 'terran/advisor/tadupd01.wav', 'protoss/advisor/padupd01.wav'],
 };
+const storageGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const storageSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
 const PLACE_SOUND = ['misc/zbldgplc.wav', 'misc/tbldgplc.wav', 'misc/pbldgplc.wav'];
 
 // Solo play: whatever the player commands runs on the next frame.
@@ -38,8 +40,12 @@ export class Game {
     // The screen is 480 high like the original and as wide as the window's shape (640 at 4:3,
     // more on wide screens); the 640-wide console sits in the middle.
     this.W = SCREEN.w;
-    this.ox = 0;
     this.canvas.width = this.W;
+    // The map is drawn at `zoom` game pixels per screen pixel into its own canvas, then scaled onto
+    // the screen; the mouse wheel changes it (a little farther out than the original by default).
+    this.zoom = Number(storageGet('sc-zoom')) || 1.15;
+    this.world = document.createElement('canvas');
+    this.worldCtx = this.world.getContext('2d');
     this.canvas.height = SCREEN.h;
     this.ctx = this.canvas.getContext('2d');
     this.ctx.imageSmoothingEnabled = false;
@@ -95,7 +101,7 @@ export class Game {
           // A warning and a blink on the minimap, at most every 15 s for buildings and for units each,
           // and not for fights on screen.
           const kind = e.building ? 'base' : 'forces';
-          const onScreen = e.x >= this.view.x && e.x < this.view.x + this.W && e.y >= this.view.y && e.y < this.view.y + SCREEN.h - 100;
+          const onScreen = e.x >= this.view.x && e.x < this.view.x + this.world.width && e.y >= this.view.y && e.y < this.view.y + this.world.height - 100 * this.zoom;
           if (onScreen || now - this.alerts[kind] < 15000) break;
           this.alerts[kind] = now;
           this.sound.play(ADVISOR[kind][this.race]);
@@ -266,7 +272,6 @@ export class Game {
     for (const [target, type, fn, opts] of this.listeners) target.removeEventListener(type, fn, opts);
     this.listeners = [];
     this.canvas.style.cursor = '';
-    if (document.pointerLockElement) document.exitPointerLock?.();
     this.video.pause();
     this.video.removeAttribute('src');
   }
@@ -321,16 +326,22 @@ export class Game {
   // wide as the window's shape needs, so nothing is stretched and there are no black bars.
   resize() {
     const ww = window.innerWidth, wh = window.innerHeight;
-    if (ww === this.winW && wh === this.winH) return;
+    if (ww === this.winW && wh === this.winH && this.zoom === this.sizedZoom) return;
     this.winW = ww;
     this.winH = wh;
+    this.sizedZoom = this.zoom;
     const W = Math.max(SCREEN.w, Math.min(1152, Math.round(SCREEN.h * ww / wh / 2) * 2));
     if (W !== this.W) {
       this.W = W;
-      this.ox = Math.floor((W - SCREEN.w) / 2);
       this.canvas.width = W;
       this.ctx.imageSmoothingEnabled = false;
-      this.image = new ImageData(W, SCREEN.h);
+    }
+    this.ui.width = W;
+    const mw = Math.round(W * this.zoom), mh = Math.round(SCREEN.h * this.zoom);
+    if (mw !== this.world.width || mh !== this.world.height) {
+      this.world.width = mw;
+      this.world.height = mh;
+      this.image = new ImageData(mw, mh);
     }
     this.scale = wh / SCREEN.h;
     this.canvas.style.width = `${ww}px`;
@@ -338,23 +349,31 @@ export class Game {
     this.cursorKey = null;
   }
 
-  // Screen position -> console coordinates (the console art is 640 wide, centred).
-  toConsole(p) { return { x: p.x - this.ox, y: p.y }; }
-
-  center(x, y) {
-    this.view.x = x - this.W / 2;
-    this.view.y = y - (SCREEN.h - 120) / 2;
+  // Mouse wheel: map zoom between the original size and half again as far out, keeping the
+  // spot under the mouse in place.
+  setZoom(z, p) {
+    z = Math.round(Math.max(1, Math.min(1.5, z)) * 20) / 20;
+    if (z === this.zoom) return;
+    const at = p || { x: this.W / 2, y: SCREEN.h / 2 };
+    const w = this.toWorld(at);
+    this.zoom = z;
+    this.view.x = w.x - at.x * z;
+    this.view.y = w.y - at.y * z;
+    storageSet('sc-zoom', String(z));
   }
 
-  // Page position -> screen pixel (0..W-1, 0-479). With the mouse captured (full screen), the
-  // game moves its own cursor and clicks happen where that cursor is.
+  center(x, y) {
+    this.view.x = x - this.W * this.zoom / 2;
+    this.view.y = y - (SCREEN.h - 120) * this.zoom / 2;
+  }
+
+  // Page position -> screen pixel (0..W-1, 0-479).
   toScreen(e) {
-    if (this.locked) return { ...this.pointer };
     const r = this.canvas.getBoundingClientRect();
     return { x: Math.floor((e.clientX - r.left) * this.W / r.width), y: Math.floor((e.clientY - r.top) * SCREEN.h / r.height) };
   }
 
-  toWorld(p) { return { x: Math.round(this.view.x + p.x), y: Math.round(this.view.y + p.y) }; }
+  toWorld(p) { return { x: Math.round(this.view.x + p.x * this.zoom), y: Math.round(this.view.y + p.y * this.zoom) }; }
 
   scroll(dt) {
     let dx = 0, dy = 0;
@@ -371,13 +390,12 @@ export class Game {
       dy += ey;
       if (ex || ey) this.edge = ['ul', 'u', 'ur', 'l', '', 'r', 'dl', 'd', 'dr'][(ey + 1) * 3 + ex + 1];
     }
-    this.view.x += Math.sign(dx) * SCROLL_SPEED * dt;
-    this.view.y += Math.sign(dy) * SCROLL_SPEED * dt;
+    this.view.x += Math.sign(dx) * SCROLL_SPEED * this.zoom * dt;
+    this.view.y += Math.sign(dy) * SCROLL_SPEED * this.zoom * dt;
   }
 
   draw(now) {
     this.resize();
-    this.ui.ox = this.ox;
     // Building placement (and landing): where the pointer would put it, the building's image in
     // the game picture, and a green or red square per tile, as in the original.
     let place = null;
@@ -394,7 +412,8 @@ export class Game {
     const v = this.engine.render(this.image, this.view.x, this.view.y);
     this.view.x = v.x;
     this.view.y = v.y;
-    const ctx = this.ctx;
+    // Map overlays (order marks, placement, drag box) go on the map canvas in game pixels.
+    const ctx = this.worldCtx;
     ctx.putImageData(this.image, 0, 0);
     const sx = (x) => x - this.view.x, sy = (y) => y - this.view.y;
 
@@ -471,11 +490,14 @@ export class Game {
       ctx.strokeRect(a.x + 0.5, a.y + 0.5, Math.abs(this.drag.x1 - this.drag.x0), Math.abs(this.drag.y1 - this.drag.y0));
     }
 
+    this.ctx.imageSmoothingEnabled = this.zoom !== 1;
+    this.ctx.drawImage(this.world, 0, 0, this.world.width, this.world.height, 0, 0, this.W, SCREEN.h);
+    this.ctx.imageSmoothingEnabled = false;
     this.engine.renderMinimap(this.miniImage);
     this.mapCtx.putImageData(this.miniImage, 0, 0);
     this.messages = this.messages.filter((m) => now - m.t < 8000);
     const secs = Math.floor(this.engine.frame * FRAME_MS / 1000);
-    this.ui.draw(ctx, {
+    this.ui.draw(this.ctx, {
       me: this.me,
       raceIndex: this.race,
       player: this.playerState,
@@ -488,8 +510,7 @@ export class Game {
       pings: (this.pings = this.pings.filter((p) => now - p.t < 3000)),
       now,
       minimapSize: { w: this.map.width, h: this.map.height },
-      viewRect: { x: this.view.x, y: this.view.y, w: this.W, h: SCREEN.h },
-      screenRight: this.W - this.ox,
+      viewRect: { x: this.view.x, y: this.view.y, w: this.world.width, h: this.world.height },
       chat: this.chat,
       messages: [
         ...this.messages,
@@ -506,15 +527,8 @@ export class Game {
         else c.drawImage(icon, x, y);
       },
     });
-    if (this.dialog) this.ui.drawDialog(ctx, this.dialog, this.dialogHover);
+    if (this.dialog) this.ui.drawDialog(this.ctx, this.dialog, this.dialogHover);
     this.updateCursor(now);
-    // Captured mouse (full screen): the game draws its own cursor, as the original does.
-    if (this.locked && this.pointer) {
-      const { name, frame } = this.cursorState;
-      const r = this.ui.meta.sheets[`cursor-${name}`].frames[frame];
-      const hot = name === 'arrow' ? [0, 0] : [r[2] >> 1, r[3] >> 1];
-      this.ui.frame(ctx, `cursor-${name}`, frame, this.pointer.x - hot[0], this.pointer.y - hot[1]);
-    }
   }
 
   // The original cursors: arrow, green/yellow/red magnifier over own/neutral/enemy units,
@@ -527,11 +541,6 @@ export class Game {
     else if (this.hoverUnit) name = this.hoverUnit.owner === this.me ? 'magg' : this.hoverUnit.owner >= 8 ? 'magy' : 'magr';
     const frames = this.ui.meta.sheets[`cursor-${name}`]?.frames.length || 1;
     const frame = Math.floor(now / 100) % frames;
-    this.cursorState = { name, frame };
-    if (this.locked) {
-      if (this.cursorKey !== 'none') { this.cursorKey = 'none'; this.canvas.style.cursor = 'none'; }
-      return;
-    }
     const key = `${name}:${frame}:${this.scale}`;
     if (key !== this.cursorKey) {
       this.cursorKey = key;
@@ -674,46 +683,24 @@ export class Game {
   }
 
   grab(e) {
-    if (this.locked) return;
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* fine without */ }
-  }
-
-  capture() {
-    if (this.locked || !this.canvas.requestPointerLock || window.scNoCapture) return; // scNoCapture: automated tests
-    if (!this.pointer) this.pointer = { x: this.W / 2, y: SCREEN.h / 2 };
-    try { this.canvas.requestPointerLock()?.catch?.(() => {}); } catch { /* needs a click */ }
   }
 
   bindInput() {
     const view = this.canvas;
     this.on(window, 'resize', () => this.resize());
     this.on(view, 'contextmenu', (e) => e.preventDefault());
-    // Full screen captures the mouse (it cannot leave the game, so the screen edges scroll);
-    // leaving full screen (Esc) releases it and the game goes back to a window.
-    this.on(document, 'pointerlockchange', () => {
-      this.locked = document.pointerLockElement === view;
-      if (!this.locked && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    });
-    this.on(document, 'fullscreenchange', () => {
-      if (document.fullscreenElement) { this.capture(); return; }
-      // Left full screen (Esc): stay in a window until the menu's Full Screen.
-      this.wantFullscreen = false;
-      if (document.pointerLockElement) document.exitPointerLock?.();
-    });
-    this.on(document, 'mouseleave', () => { if (!this.locked) this.pointerIn = false; });
+    this.on(view, 'wheel', (e) => {
+      e.preventDefault();
+      if (this.dialog) return;
+      this.setZoom(this.zoom + (e.deltaY > 0 ? 0.05 : -0.05), this.pointer);
+    }, { passive: false });
+    // Leaving full screen (Esc) keeps the game in a window until the menu's Full Screen. In full
+    // screen the mouse cannot leave the monitor, so its edges scroll the view.
+    this.on(document, 'fullscreenchange', () => { if (!document.fullscreenElement) this.wantFullscreen = false; });
+    this.on(document, 'mouseleave', () => { this.pointerIn = false; });
     this.on(window, 'pointermove', (e) => {
-      if (this.locked) {
-        const r = this.canvas.getBoundingClientRect();
-        const p0 = this.pointer || { x: this.W / 2, y: SCREEN.h / 2 };
-        this.subPx = (this.subPx || 0) + e.movementX * this.W / r.width;
-        this.subPy = (this.subPy || 0) + e.movementY * SCREEN.h / r.height;
-        const dx = Math.trunc(this.subPx), dy = Math.trunc(this.subPy);
-        this.subPx -= dx;
-        this.subPy -= dy;
-        this.pointer = { x: Math.max(0, Math.min(this.W - 1, p0.x + dx)), y: Math.max(0, Math.min(SCREEN.h - 1, p0.y + dy)) };
-      } else {
-        this.pointer = this.toScreen(e);
-      }
+      this.pointer = this.toScreen(e);
       this.pointerIn = true;
       const p = this.pointer;
       if (this.dialog) { this.dialogHover = this.ui.dialogButtonAt(this.dialog, p.x, p.y); this.hoverPos = -1; return; }
@@ -734,7 +721,6 @@ export class Game {
       this.sound.unlock();
       // Back in full screen on a click (a page may only go full screen when the player acts).
       if (!document.fullscreenElement && this.wantFullscreen) this.fullscreen();
-      else if (document.fullscreenElement && !this.locked) this.capture();
       const p = this.toScreen(e);
       this.pointer = p;
       if (this.dialog) {
