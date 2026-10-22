@@ -769,10 +769,24 @@ API const char* bw_selection_extra_json() {
 		}
 		loaded += "]";
 		int max_energy = g->unit_max_energy(u).integer_part();
+		// Armor and weapons with their upgrade levels, shown as icons in the status panel.
+		a_string gear = "[";
+		if (!building || g->unit_is(u, UnitTypes::Terran_Missile_Turret) || g->unit_is(u, UnitTypes::Terran_Bunker)) {
+			const upgrade_type_t* armor_up = u->unit_type->armor_upgrade;
+			gear += format("[%d,%d,%d]", armor_up ? armor_up->icon : 292, u->unit_type->armor, armor_up ? g->player_upgrade_level(u->owner, armor_up->id) : 0);
+			const weapon_type_t* seen = nullptr;
+			for (auto* w : {g->unit_or_subunit_ground_weapon(u), g->unit_or_subunit_air_weapon(u)}) {
+				if (!w || w == seen) continue;
+				seen = w;
+				const upgrade_type_t* up = w->damage_upgrade;
+				gear += format(",[%d,%d,%d]", w->icon, w->damage_amount, up ? g->player_upgrade_level(u->owner, up->id) : 0);
+			}
+		}
+		gear += "]";
 		text_out += format("{\"research\":%d,\"upgrade\":%d,\"work\":%d,\"addon\":%d,\"addonProgress\":%d,\"flying\":%d,\"cloaked\":%d,"
-			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d}",
+			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d,\"gear\":%s}",
 			research, upgrade, work, addon, addon_progress, building && g->u_flying(u) ? 1 : 0, g->u_cloaked(u) || g->u_requires_detector(u) ? 1 : 0,
-			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0);
+			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0, gear);
 	}
 	text_out += "]";
 	return text_out.c_str();

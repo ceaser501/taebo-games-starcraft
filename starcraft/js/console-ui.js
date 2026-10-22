@@ -222,7 +222,16 @@ export class ConsoleUI {
     } else if (u.nuke && mine) {
       this.text(ctx, u.nuke === 2 ? 'Nuke Ready' : 'Arming Nuke', STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
     } else if (!u.building && mine) {
-      this.text(ctx, `Kills: ${u.kills ?? 0}`, STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
+      this.text(ctx, `Kills: ${u.kills ?? 0}`, STATUS.x + 160, STATUS.y + 22, COLOR.blue, 'font10', 'center');
+    }
+    // Armor and weapon icons with the upgrade level in the corner.
+    if (u.gear?.length && !(u.progress >= 0 && mine) && !u.loaded?.length && u.research < 0 && u.upgrade < 0) {
+      u.gear.forEach(([icon, , level], i) => {
+        const x = STATUS.x + 82 + i * 38, y = STATUS.y + 40;
+        this.frame(ctx, `cmdbtns-${this.race}`, 13, x, y);
+        s.drawIcon(ctx, icon, x + 2, y + 2, 0, 32, 30);
+        if (level) this.text(ctx, String(level), x + 27, y + 21, COLOR.white, 'font8');
+      });
     }
     if (u.energy >= 0 && u.maxEnergy > 0 && u.completed) this.text(ctx, `${u.energy}/${u.maxEnergy}`, STATUS.x + 40, STATUS.y + 80, COLOR.blue, 'font8', 'center');
   }

@@ -20,6 +20,7 @@ node starcraft/tools/casc.mjs extract "$SC" ~/sc-assets 'arr/' 'scripts/' ...   
 | `data/<타일셋>.bin.gz` + `.idx` | 타일셋 그림, 팔레트, 조명표 (맵의 타일셋만 받음) |
 | `sound/**.wav` | 효과음·음성 (원작 22kHz, 처음 재생할 때 받음) |
 | `maps/**` + `maps.json` | 맵 (.scm/.scx 그대로) |
+| `portrait/**.webm` | 초상화 (리마스터 SD의 WebM, 대기·말하기 클립) |
 | `ui/*.png` + `ui.json` | 원작 화면 그림: 콘솔, 와이어프레임, 버튼 틀, 자원 아이콘, 커서(리마스터 SD의 DDS를 PNG로), 비트맵 글꼴(.fnt), 유닛 이름(stat_txt.tbl) |
 
 ## 엔진
@@ -57,6 +58,17 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 모두 원작 그림과 비트맵 글꼴로 그립니다. 글자는 원작과 같은 영어입니다. 커서도 원작 것(화살표, 아군·적·중립 돋보기,
 조준, 화면 끝 스크롤)입니다.
 
+## 테란 (3단계)
+
+테란 유닛·건물의 원작 명령 카드가 모두 들어 있습니다: SCV 기본·고급 건물, 생산, 애드온, 연구·업그레이드,
+집결지, 건물 띄우기·내리기, 스팀팩, 시즈 모드, 클로킹, 마법(락다운, EMP, 이레디에이트, 디펜시브 매트릭스,
+야마토, 스캐너, 힐, 리스토레이션, 옵티컬 플레어, 스파이더 마인, 핵), 벙커·드랍십 태우기와 내리기.
+버튼이 켜지는지는 엔진의 원작 판정(`unit_can_build`, `unit_can_research`, `unit_can_use_tech` 등)을 그대로 씁니다.
+상태창에는 연구·업그레이드·애드온 진행, 탑승 유닛(누르면 내림), 처치 수, 에너지, 방어·무기 업그레이드 아이콘이 나옵니다.
+
+혼자 테스트에서 개발자 도구로 `?debug`를 붙여 열면 `window.sc`로 엔진에 접근할 수 있고,
+`sc.engine.M._bw_enable_cheats(1); sc.game.send(Uint8Array.of(18, 0x12, 0, 0, 0))`로 원작 치트(돈, 빠른 건설)를 켤 수 있습니다.
+
 ## 조작
 
 | 입력 | 동작 |
@@ -80,7 +92,8 @@ Emscripten으로 `js/engine/bw.mjs` + `bw.wasm`으로 빌드합니다. 빌드 �
 | `js/lockstep.js` | 온라인 락스텝(턴, 재전송, 체크섬) |
 | `js/net.js` | Supabase Realtime 방·대기실 연결 (Worms와 같음) |
 | `js/console-ui.js` | 콘솔·미니맵·상태창·명령 카드·자원·글자·커서 그리기 |
-| `js/units.js` | 명령 카드(버튼·단축키·아이콘·설명), 원작 안내 문구 |
+| `js/units.js` | 테란 명령 카드(버튼 위치·단축키·아이콘·설명), 원작 안내 문구 |
+| `js/bw-ids.js` | 유닛·명령·기술·업그레이드 번호 (`tools/gen-ids.mjs`가 엔진 소스에서 생성) |
 | `js/sound.js` | 효과음·음성 재생 (Web Audio, 동시 8개) |
 | `engine/game.cpp` | 엔진 쪽 함수: 시작, 프레임, 명령, 그리기, 안개, 미니맵, 선택 |
 | `engine/platform.cpp` | SDL 대신 메모리 화면 |

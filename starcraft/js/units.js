@@ -57,7 +57,7 @@ const BUILDINGS = {
 const UNITS = {
   [U.Terran_Marine]: { stim: 6 },
   [U.Terran_Firebat]: { stim: 6 },
-  [U.Terran_Medic]: { noAttack: true, spells: [['heal', 6], ['restoration', 7], ['flare', 8]] },
+  [U.Terran_Medic]: { spells: [['heal', 6], ['restoration', 7], ['flare', 8]] },
   [U.Terran_Ghost]: { cloak: [T.Personnel_Cloaking, 6], spells: [['lockdown', 7], ['nuke', 8]] },
   [U.Terran_Vulture]: { spells: [['mines', 6]] },
   [U.Terran_Siege_Tank_Tank_Mode]: { siege: 6 },
