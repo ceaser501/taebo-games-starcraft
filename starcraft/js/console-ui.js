@@ -14,8 +14,10 @@ const CARD = { x: 505, y: 357, dx: 46, dy: 40 };
 // the panel's frame (above it the art belongs to neighbouring parts).
 const PANEL = {
   terran: { at: 410, left: [150, 162], right: [398, 410], col: 274, top: 74 },
-  protoss: { at: 410, left: [143, 155], right: [398, 410], col: 238, top: 72 },
-  zerg: { at: 410, left: [146, 160], right: [396, 410], col: 308, slice: 24, top: 72 },
+  // Protoss and Zerg frames are decorated along the top, so the new panel copies a stretch of the
+  // real panel (`chunk` columns at a time) and mirrors the right edge for its left edge.
+  protoss: { at: 410, left: [143, 155], right: [398, 410], chunk: 200, mirror: true, top: 40 },
+  zerg: { at: 410, left: [146, 160], right: [396, 410], chunk: 200, mirror: true, top: 40 },
 };
 // Per race: the window above the portrait where the clock shows (console art x, y, w, h).
 const CLOCK = { terran: [414, 95, 64, 17], protoss: [416, 90, 66, 17], zerg: [414, 100, 64, 15] };
@@ -62,18 +64,19 @@ export class ConsoleUI {
 
   // Screen x -> console art x (the new panel counts as the status panel's window).
   artX(x) {
-    const { at, col } = PANEL[this.race];
+    const { at, right } = PANEL[this.race];
     if (x < at) return x;
-    if (x < at + this.extra) return col;
+    if (x < at + this.extra) return right[0] - 20;
     return x - this.extra;
   }
 
   // The added panel's black window on screen, or null when there is no room for it.
   get infoRect() {
-    const { at, left, right } = PANEL[this.race];
-    const w = this.extra - (left[1] - left[0]) - (right[1] - right[0]) - 6;
+    const { at, left, right, mirror } = PANEL[this.race];
+    const lw = mirror ? right[1] - right[0] : left[1] - left[0];
+    const w = this.extra - lw - (right[1] - right[0]) - 6;
     if (w < 40) return null;
-    return { x: at + (left[1] - left[0]) + 3, y: STATUS.y + 1, w, h: STATUS.h - 4 };
+    return { x: at + lw + 5, y: STATUS.y + 1, w: w - 2, h: STATUS.h - 1 };
   }
 
   get names() { return this.meta.names; }
@@ -193,14 +196,30 @@ export class ConsoleUI {
     // Up to the status panel's right edge as is; then the new panel; then the rest moved right.
     ctx.drawImage(img, 0, 0, P.at, h, 0, CONSOLE_Y, P.at, h);
     if (extra) {
-      const top = P.top, ph = h - top, lw = P.left[1] - P.left[0], rw = P.right[1] - P.right[0];
+      const top = P.top, ph = h - top, rw = P.right[1] - P.right[0];
+      const lw = P.mirror ? rw : P.left[1] - P.left[0];
       const room = extra - lw - rw;
       if (room > 0) {
-        ctx.drawImage(img, P.left[0], top, lw, ph, P.at, CONSOLE_Y + top, lw, ph);
-        const sw = P.slice || 1;
-        for (let i = 0; i < room; i += sw) {
-          const w = sw === 1 ? room : Math.min(sw, room - i);
-          ctx.drawImage(img, P.col, top, w, ph, P.at + lw + i, CONSOLE_Y + top, w, ph);
+        if (P.mirror) {
+          // Left edge: the right edge flipped, so the frame matches on both sides.
+          ctx.save();
+          ctx.translate(P.at + lw, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(img, P.right[0], top, rw, ph, 0, CONSOLE_Y + top, rw, ph);
+          ctx.restore();
+        } else {
+          ctx.drawImage(img, P.left[0], top, lw, ph, P.at, CONSOLE_Y + top, lw, ph);
+        }
+        if (P.chunk) {
+          // The window and its top frame copied from the status panel itself (decorations and all),
+          // in pieces ending where the right edge starts.
+          for (let x = P.at + lw + room; x > P.at + lw;) {
+            const w = Math.min(P.chunk, x - P.at - lw);
+            ctx.drawImage(img, P.right[0] - w, top, w, ph, x - w, CONSOLE_Y + top, w, ph);
+            x -= w;
+          }
+        } else {
+          ctx.drawImage(img, P.col, top, 1, ph, P.at + lw, CONSOLE_Y + top, room, ph);
         }
         ctx.drawImage(img, P.right[0], top, rw, ph, P.at + lw + room, CONSOLE_Y + top, rw, ph);
       } else {
@@ -352,9 +371,9 @@ export class ConsoleUI {
     ctx.clip();
     const race = s.raceIndex;
     const boxes = (items, y, draw) => {
-      const per = Math.max(1, Math.floor(w / 38));
-      items.slice(0, per).forEach((it, i) => draw(it, x0 + i * 38, y));
-      if (items.length > per) this.text(ctx, `+${items.length - per}`, x0 + per * 38 - 14, y + 24, COLOR.white, 'font8');
+      const per = Math.max(1, Math.floor((w + 4) / 42));
+      items.slice(0, per).forEach((it, i) => draw(it, x0 + i * 42, y));
+      if (items.length > per) this.text(ctx, `+${items.length - per}`, x0 + per * 42 - 16, y + 24, COLOR.white, 'font8');
     };
     const prodRow = (y) => {
       if (!o.prod.length) { this.text(ctx, 'Nothing in production', x0, y + 12, COLOR.grey, 'font8'); return; }
@@ -381,10 +400,10 @@ export class ConsoleUI {
       let x = x0;
       this.frame(ctx, 'icons', 0, x, y);
       this.text(ctx, String(m), x + 16, y + 1, COLOR.white, 'font8');
-      x += 34;
+      x += 44;
       this.frame(ctx, 'icons', 1 + race, x, y);
       this.text(ctx, String(g), x + 16, y + 1, COLOR.white, 'font8');
-      x += 34;
+      x += 44;
       this.text(ctx, `Idle ${idle}`, x, y + 1, idle ? COLOR.yellow : COLOR.grey, 'font8');
     };
     const apmLine = (x, y) => this.text(ctx, `APM ${info.apm}`, x, y + 1, COLOR.blue, 'font8');
@@ -417,10 +436,10 @@ export class ConsoleUI {
         this.text(ctx, String(info.apm), x0, y0 + 16, COLOR.white, 'font16');
         break;
       default: // all: workers and APM on one line, then production, then army
-        workersLine(y0 + 1);
-        apmLine(x0 + w - 44, y0 + 1);
-        prodRow(y0 + 14);
-        armyRow(y0 + 50);
+        workersLine(y0 + 3);
+        apmLine(x0 + w - 48, y0 + 3);
+        prodRow(y0 + 18);
+        armyRow(y0 + 54);
     }
     ctx.restore();
   }
