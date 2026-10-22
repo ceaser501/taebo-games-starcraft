@@ -11,7 +11,8 @@
   "scripts": {
     "start": "webpack serve --open --config webpack.config.dev.js",
     "build": "webpack --config webpack.config.prod.js",
-    "sc:casc": "node starcraft/tools/casc.mjs"
+    "sc:casc": "node starcraft/tools/casc.mjs",
+    "sc:pack": "node starcraft/tools/pack-data.mjs"
   },
   "devDependencies": {
     "copy-webpack-plugin": "^11.0.0",

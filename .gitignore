@@ -12,3 +12,6 @@ casc-list.txt
 
 # Converted from sc-assets by the converter
 starcraft/assets/sc/
+
+# Native engine test build
+starcraft/engine/bw-test
