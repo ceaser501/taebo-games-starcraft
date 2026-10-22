@@ -515,14 +515,53 @@ API size_t bw_cmd_return_cargo() { return write_out({30, 0}); }
 API size_t bw_cmd_train(int unit_type) { out.assign({31}); put16(unit_type); return out.size(); }
 API size_t bw_cmd_cancel_queue(int slot) { out.assign({32}); put16(slot); return out.size(); }
 API size_t bw_cmd_cancel_construction() { return write_out({24}); }
+// Each race builds its own way: SCVs construct, probes warp in, drones turn into the building,
+// and a Nydus Canal places its exit.
 API size_t bw_cmd_build(int unit_type, int tile_x, int tile_y) {
-	out.assign({12, (uint8_t)Orders::PlaceBuilding});
+	Orders order = Orders::PlaceBuilding;
+	unit_t* u = g->current_selection.empty() ? nullptr : g->get_unit(g->current_selection.front());
+	if (u && g->unit_is_nydus(u)) order = Orders::BuildNydusExit;
+	else if (u && g->unit_race(u) == race_t::protoss) order = Orders::PlaceProtossBuilding;
+	else if (u && g->unit_race(u) == race_t::zerg) order = Orders::DroneStartBuild;
+	out.assign({12, (uint8_t)order});
 	put16(tile_x);
 	put16(tile_y);
 	put16(unit_type);
 	return out.size();
 }
 API size_t bw_cmd_group(int subaction, int group) { return write_out({19, subaction, group}); }
+
+// Protoss and Zerg commands: larva / hydralisk / mutalisk morphs, building mutations, burrowing,
+// cancelling eggs and mutations, archon merges, interceptors and scarabs.
+API size_t bw_cmd_morph(int unit_type) { out.assign({35}); put16(unit_type); return out.size(); }
+API size_t bw_cmd_morph_building(int unit_type) { out.assign({53}); put16(unit_type); return out.size(); }
+API size_t bw_cmd_burrow() { return write_out({44, 0}); }
+API size_t bw_cmd_unburrow() { return write_out({45, 0}); }
+API size_t bw_cmd_cancel_morph() { return write_out({25}); }
+API size_t bw_cmd_archon() { return write_out({42}); }
+API size_t bw_cmd_dark_archon() { return write_out({90}); }
+API size_t bw_cmd_train_fighter() { return write_out({39}); }
+
+// Selects the larvae of the selected hatcheries (the hatchery's "Select Larva" button).
+API int bw_select_larva() {
+	a_vector<unit_t*> hatcheries, larvae;
+	for (auto uid : g->current_selection) {
+		unit_t* u = g->get_unit(uid);
+		if (own_unit(u) && g->unit_is_hatchery(u)) hatcheries.push_back(u);
+	}
+	if (hatcheries.empty()) return 0;
+	for (unit_t* u : ptr(g->st.player_units[g->viewer])) {
+		if (!g->unit_is(u, UnitTypes::Zerg_Larva) || !u->connected_unit) continue;
+		if (std::find(hatcheries.begin(), hatcheries.end(), u->connected_unit) != hatcheries.end()) larvae.push_back(u);
+	}
+	if (larvae.empty()) return 0;
+	g->current_selection_clear();
+	for (unit_t* u : larvae) {
+		if (g->current_selection.size() >= 12) break;
+		g->current_selection_add(u);
+	}
+	return (int)g->current_selection.size();
+}
 
 // Whether the selected worker could put `unit_type` with its top-left on tile (tx, ty).
 API int bw_can_place(int unit_type, int tx, int ty) {
@@ -551,7 +590,9 @@ API const char* bw_selection_json() {
 		}
 		queue += "]";
 		int progress = -1;
-		if (!g->u_completed(u) && ut->build_time) progress = 100 - u->remaining_build_time * 100 / ut->build_time;
+		// Eggs, cocoons and mutating buildings count down the time of what they become.
+		int total = !u->build_queue.empty() && (g->unit_is_egg(u) || g->unit_race(u) == race_t::zerg) ? u->build_queue.front()->build_time : ut->build_time;
+		if (!g->u_completed(u) && total) progress = 100 - u->remaining_build_time * 100 / total;
 		else if (u->current_build_unit && u->current_build_unit->unit_type->build_time) {
 			auto* b = u->current_build_unit;
 			progress = 100 - b->remaining_build_time * 100 / b->unit_type->build_time;
@@ -586,11 +627,12 @@ API const char* bw_player_json(int slot) {
 API const char* bw_unit_type_json(int id) {
 	const unit_type_t* ut = g->get_unit_type((UnitTypes)id);
 	text_out = format("{\"id\":%d,\"minerals\":%d,\"gas\":%d,\"supply\":%d,\"time\":%d,\"w\":%d,\"h\":%d,\"hp\":%d,"
-		"\"ready\":%d,\"what\":[%d,%d],\"yes\":[%d,%d],\"pissed\":[%d,%d],\"portrait\":%d}",
+		"\"ready\":%d,\"what\":[%d,%d],\"yes\":[%d,%d],\"pissed\":[%d,%d],\"portrait\":%d,\"race\":%d,\"psi\":%d,\"creep\":%d}",
 		id, ut->mineral_cost, ut->gas_cost, (int)ut->supply_required.raw_value / 2, ut->build_time,
 		ut->placement_size.x, ut->placement_size.y, ut->hitpoints.integer_part(),
 		ut->ready_sound, ut->first_what_sound, ut->last_what_sound, ut->first_yes_sound, ut->last_yes_sound,
-		ut->first_pissed_sound, ut->last_pissed_sound, ut->portrait);
+		ut->first_pissed_sound, ut->last_pissed_sound, ut->portrait, (int)g->unit_race(ut),
+		g->ut_requires_psionic_matrix(ut) ? 1 : 0, g->ut_requires_creep(ut) ? 1 : 0);
 	return text_out.c_str();
 }
 
@@ -804,9 +846,16 @@ API const char* bw_selection_extra_json() {
 		int max_energy = g->unit_max_energy(u).integer_part();
 		// Armor and weapons with their upgrade levels, shown as icons in the status panel.
 		a_string gear = "[";
-		if (!building || g->unit_is(u, UnitTypes::Terran_Missile_Turret) || g->unit_is(u, UnitTypes::Terran_Bunker)) {
+		bool defense = g->unit_is(u, UnitTypes::Terran_Missile_Turret) || g->unit_is(u, UnitTypes::Terran_Bunker) || g->unit_is(u, UnitTypes::Protoss_Photon_Cannon) ||
+			g->unit_is(u, UnitTypes::Zerg_Sunken_Colony) || g->unit_is(u, UnitTypes::Zerg_Spore_Colony);
+		if ((!building || defense) && !g->unit_is_egg(u) && !g->unit_is(u, UnitTypes::Zerg_Larva)) {
 			const upgrade_type_t* armor_up = u->unit_type->armor_upgrade;
 			gear += format("[%d,%d,%d]", armor_up ? armor_up->icon : 292, u->unit_type->armor, armor_up ? g->player_upgrade_level(u->owner, armor_up->id) : 0);
+			// Protoss: the shields, upgraded at the forge.
+			if (u->unit_type->has_shield) {
+				auto* sh = g->get_upgrade_type(UpgradeTypes::Protoss_Plasma_Shields);
+				gear += format(",[%d,0,%d]", sh->icon, g->player_upgrade_level(u->owner, UpgradeTypes::Protoss_Plasma_Shields));
+			}
 			const weapon_type_t* seen = nullptr;
 			for (auto* w : {g->unit_or_subunit_ground_weapon(u), g->unit_or_subunit_air_weapon(u)}) {
 				if (!w || w == seen) continue;
@@ -817,9 +866,14 @@ API const char* bw_selection_extra_json() {
 		}
 		gear += "]";
 		text_out += format("{\"research\":%d,\"upgrade\":%d,\"work\":%d,\"addon\":%d,\"addonProgress\":%d,\"flying\":%d,\"cloaked\":%d,"
-			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d,\"gear\":%s}",
+			"\"nuke\":%d,\"loaded\":%s,\"kills\":%d,\"maxEnergy\":%d,\"sieged\":%d,\"gear\":%s,\"maxShields\":%d,\"burrowed\":%d,"
+			"\"fighters\":%d,\"maxFighters\":%d,\"powered\":%d}",
 			research, upgrade, work, addon, addon_progress, building && g->u_flying(u) ? 1 : 0, g->u_cloaked(u) || g->u_requires_detector(u) ? 1 : 0,
-			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0, gear);
+			nuke, loaded, u->kill_count, max_energy, g->unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode) ? 1 : 0, gear,
+			u->unit_type->has_shield ? u->unit_type->shield_points : -1, g->u_burrowed(u) ? 1 : 0,
+			g->unit_is_carrier(u) ? (int)g->unit_interceptor_count(u) : g->unit_is_reaver(u) ? (int)g->unit_scarab_count(u) : -1,
+			g->unit_is_carrier(u) ? (int)g->unit_max_interceptor_count(u) : g->unit_is_reaver(u) ? (int)g->unit_max_scarab_count(u) : -1,
+			g->ut_requires_psionic_matrix(u->unit_type) && !g->is_in_psionic_matrix(u->owner, u->sprite->position) ? 0 : 1);
 	}
 	text_out += "]";
 	return text_out.c_str();
@@ -885,7 +939,14 @@ API const char* bw_events_json() {
 			continue;
 		}
 		const seen_unit& o = i->second;
-		if (s.type != o.type) continue; // morphed (siege mode and the like)
+		if (s.type != o.type) {
+			// Morphed: eggs and cocoons hatching, archons merged, count as new units; siege mode and
+			// burrowing do not.
+			bool hatched = o.type == (int)UnitTypes::Zerg_Egg || o.type == (int)UnitTypes::Zerg_Cocoon || o.type == (int)UnitTypes::Zerg_Lurker_Egg;
+			bool merged = g->unit_is(u, UnitTypes::Protoss_Archon) || g->unit_is(u, UnitTypes::Protoss_Dark_Archon);
+			if (s.completed && (hatched || merged)) add("ready", u); // else when it completes
+			continue;
+		}
 		if (s.completed && !o.completed) add(g->ut_addon(u) ? "addon" : g->ut_building(u) ? "built" : "ready", u);
 		if (s.nuke_ready && !o.nuke_ready) add("nukeready", u);
 		if (s.life < o.life && s.completed) add("attacked", u);
@@ -925,6 +986,9 @@ API int bw_placement(int type, int tx, int ty, int land) {
 	int mask = 1 << me;
 	auto& gs = g->game_st;
 	bool depot = g->ut_resource_depot(ut);
+	// Zerg buildings need creep (all but the hatchery); Protoss ones need a pylon's power.
+	bool creep = g->ut_requires_creep(ut), zerg = g->unit_race(ut) == race_t::zerg;
+	bool unpowered = g->ut_requires_psionic_matrix(ut) && !g->is_in_psionic_matrix(me, center);
 	for (int y = ty; y < ty + th; ++y) {
 		for (int x = tx; x < tx + tw; ++x) {
 			bool good = x >= 0 && y >= 0 && x < (int)gs.map_tile_width && y < (int)gs.map_tile_height;
@@ -932,8 +996,10 @@ API int bw_placement(int type, int tx, int ty, int land) {
 				good = ok;
 			} else if (good) {
 				auto& tile = g->st.tiles[y * gs.map_tile_width + x];
-				int flags_mask = tile_t::flag_partially_walkable | tile_t::flag_unbuildable | tile_t::flag_has_creep;
+				int flags_mask = tile_t::flag_partially_walkable | tile_t::flag_unbuildable | (zerg ? 0 : tile_t::flag_has_creep);
 				if (tile.explored & mask) good = false;
+				else if (unpowered) good = false;
+				else if (creep && !(tile.flags & tile_t::flag_has_creep)) good = false;
 				else if (tile.flags & flags_mask) good = false;
 				else if (tile.flags & tile_t::flag_occupied && !(builder && land == 0 && g->u_grounded_building(builder))) good = false;
 				else {
@@ -972,3 +1038,6 @@ API int bw_nukes_ready(int slot) {
 	}
 	return n;
 }
+
+// Whether a world position is inside one of the viewer's pylon fields (Protoss buildings need it).
+API int bw_powered_at(int x, int y) { return g->viewer >= 0 && g->is_in_psionic_matrix(g->viewer, xy(x, y)) ? 1 : 0; }

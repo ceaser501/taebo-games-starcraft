@@ -155,6 +155,7 @@ export class Engine {
   select(x0, y0, x1, y1, shift, sameType) { return this.M._bw_select(x0, y0, x1, y1, shift ? 1 : 0, sameType ? 1 : 0); }
   nukesReady(slot) { return this.M._bw_nukes_ready(slot); }
   selectId(id) { return this.M._bw_select_id(id); }
+  selectLarva() { return this.M._bw_select_larva(); }
   syncSelection() { return this.M._bw_sync_selection(); }
   selection() { return this.json(this.M._bw_selection_json()); }
   player(slot) { return this.json(this.M._bw_player_json(slot)); }
@@ -165,6 +166,7 @@ export class Engine {
     return owner < 0 ? null : { owner };
   }
 
+  poweredAt(x, y) { return !!this.M._bw_powered_at(x, y); }
   canPlace(type, tx, ty) { return !!this.M._bw_can_place(type, tx, ty); }
 
   unitType(id) {
@@ -244,5 +246,13 @@ export class Engine {
     liftoff: () => this.bytes(this.M._bw_cmd_liftoff()),
     land: (tx, ty) => this.bytes(this.M._bw_cmd_land(tx, ty)),
     addon: (type) => this.bytes(this.M._bw_cmd_addon(type)),
+    morph: (type) => this.bytes(this.M._bw_cmd_morph(type)),
+    morphBuilding: (type) => this.bytes(this.M._bw_cmd_morph_building(type)),
+    burrow: () => this.bytes(this.M._bw_cmd_burrow()),
+    unburrow: () => this.bytes(this.M._bw_cmd_unburrow()),
+    cancelMorph: () => this.bytes(this.M._bw_cmd_cancel_morph()),
+    archon: () => this.bytes(this.M._bw_cmd_archon()),
+    darkArchon: () => this.bytes(this.M._bw_cmd_dark_archon()),
+    trainFighter: () => this.bytes(this.M._bw_cmd_train_fighter()),
   };
 }

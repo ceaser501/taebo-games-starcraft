@@ -31,8 +31,10 @@
 
   <div id="menu" class="panel">
     <h1>STARCRAFT</h1>
-    <p class="sub">브루드워 · 테란 대 테란</p>
+    <p class="sub">브루드워 1:1</p>
+    <label>내 종족 <select id="race"><option value="1">테란</option><option value="2">프로토스</option><option value="0">저그</option><option value="-1">랜덤</option></select></label>
     <label>맵 <select id="map"></select></label>
+    <label>상대 종족 (혼자 테스트) <select id="enemy-race"><option value="1">테란</option><option value="2">프로토스</option><option value="0">저그</option><option value="-1">랜덤</option></select></label>
     <button id="solo" type="button" disabled>불러오는 중…</button>
     <p class="sub">혼자 테스트: 상대 기지는 가만히 있어요.</p>
     <p id="notice"></p>
@@ -52,7 +54,7 @@
       <dt>오른쪽 클릭</dt><dd>이동·공격·채취 (Shift 예약)</dd>
       <dt>방향키, 미니맵</dt><dd>화면 이동 (전체화면에서는 화면 끝으로도)</dd>
       <dt>Ctrl+숫자 / 숫자</dt><dd>부대 지정 / 부르기 (두 번 누르면 이동)</dd>
-      <dt>M S A P H G C B</dt><dd>명령 단축키, Esc 취소</dd>
+      <dt>M S A P H G C B</dt><dd>명령 단축키, Esc 취소 (저그: 해처리 선택 후 S로 라바)</dd>
       <dt>F2~F4 / Shift+F2~F4</dt><dd>저장한 화면으로 / 지금 화면 저장</dd>
       <dt>Enter</dt><dd>채팅 (혼자 테스트에서는 show me the money, operation cwal)</dd>
       <dt>Alt+미니맵 클릭</dt><dd>핑</dd>
@@ -64,6 +66,7 @@
     <h2>대기실</h2>
     <p class="code-line">방 코드 <b id="lobby-code"></b> <button type="button" id="copy-code">복사</button></p>
     <ul id="lobby-players"></ul>
+    <label>내 종족 <select id="lobby-race"><option value="1">테란</option><option value="2">프로토스</option><option value="0">저그</option><option value="-1">랜덤</option></select></label>
     <label id="lobby-map-label">맵 <select id="lobby-map"></select></label>
     <p id="lobby-map-name" class="sub"></p>
     <button type="button" id="lobby-start" disabled>게임 시작</button>

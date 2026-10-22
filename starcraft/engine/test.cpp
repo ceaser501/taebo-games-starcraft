@@ -122,14 +122,14 @@ int main(int argc, char** argv) {
 }
 void dump_icons() {
 	{
-		// A sheet of the first 64 command icons, to check colours.
-		int n = 48, cols = 12;
+		// Command icons from 224 on, 16 per row (row r, column c is icon 224 + 16 r + c).
+		int first = 224, cols = 16, n = bw_icon_count(0) - first;
+		n -= n % cols;
 		bw_icon(0, 0, 0);
 		int w = bw_icon_w(), h = bw_icon_h();
 		std::vector<uint8_t> sheet((size_t)cols * w * (n / cols) * h * 4, 0);
 		for (int i = 0; i != n; ++i) {
-			static const int pick[] = {235,237,238,239,240,241,242,243,244,245,246,247,256,257,258,259,260,261,262,263,276,277,278,279,280,281,282,283,284,285,286,287,300,301,302,303,304,305,306,307,308,309,310,311,312,313,314,315,232};
-			const uint8_t* p = bw_icon(0, pick[i], 0);
+			const uint8_t* p = bw_icon(0, first + i, 0);
 			for (int y = 0; y != h; ++y) memcpy(&sheet[(((i / cols) * h + y) * cols * w + (i % cols) * w) * 4], p + y * w * 4, w * 4);
 		}
 		save("icons.rgba", sheet.data(), cols * w, (n / cols) * h);

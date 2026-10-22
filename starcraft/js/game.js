@@ -2,14 +2,23 @@
 // (map view plus console), and turns mouse and keyboard input into commands. Commands never touch
 // the game directly; they go to the lockstep (solo: run on the next frame; online: run on both
 // computers on the same frame).
-import { commandCard, MESSAGES } from './units.js';
+import { commandCard, message } from './units.js';
 import { SCREEN, MINIMAP, COLOR } from './console-ui.js';
-import { Orders } from './bw-ids.js';
+import { Orders, UnitTypes } from './bw-ids.js';
 
 export const FRAME_MS = 42;
 const SCROLL_SPEED = 0.7; // map pixels per ms with the arrow keys or the screen edge
 const RACES = ['zerg', 'terran', 'protoss'];
 const PORTRAITS = new URL('assets/sc/portrait/', document.baseURI).href;
+// The advisor's announcements per race (0 zerg, 1 terran, 2 protoss); Zerg says "Evolution
+// complete" for both research and upgrades.
+const ADVISOR = {
+  research: ['zerg/advisor/zadupd02.wav', 'terran/advisor/tadupd02.wav', 'protoss/advisor/padupd02.wav'],
+  upgrade: ['zerg/advisor/zadupd02.wav', 'terran/advisor/tadupd06.wav', 'protoss/advisor/padupd06.wav'],
+  base: ['zerg/advisor/zadupd00.wav', 'terran/advisor/tadupd00.wav', 'protoss/advisor/padupd00.wav'],
+  forces: ['zerg/advisor/zadupd01.wav', 'terran/advisor/tadupd01.wav', 'protoss/advisor/padupd01.wav'],
+};
+const PLACE_SOUND = ['misc/zbldgplc.wav', 'misc/tbldgplc.wav', 'misc/pbldgplc.wav'];
 
 // Solo play: whatever the player commands runs on the next frame.
 export class SoloLockstep {
@@ -68,10 +77,11 @@ export class Game {
           if (t.ready) this.sound.play(this.engine.soundFile(t.ready));
           break;
         }
-        case 'built': this.sound.play('terran/scv/tscupd00.wav'); break;
+        // "Job's finished": the SCV's line, Terran only.
+        case 'built': if (this.engine.unitType(e.type).race === 1) this.sound.play('terran/scv/tscupd00.wav'); break;
         case 'addon': this.sound.play('terran/advisor/tadupd03.wav'); break;
-        case 'research': this.sound.play('terran/advisor/tadupd02.wav'); break;
-        case 'upgrade': this.sound.play('terran/advisor/tadupd06.wav'); break;
+        case 'research': this.sound.play(ADVISOR.research[this.race]); break;
+        case 'upgrade': this.sound.play(ADVISOR.upgrade[this.race]); break;
         case 'nukeready': this.sound.play('terran/advisor/tadupd07.wav'); break;
         case 'nuke': this.notice('nuke'); break;
         case 'attacked': {
@@ -81,7 +91,7 @@ export class Game {
           const onScreen = e.x >= this.view.x && e.x < this.view.x + SCREEN.w && e.y >= this.view.y && e.y < this.view.y + SCREEN.h - 100;
           if (onScreen || now - this.alerts[kind] < 15000) break;
           this.alerts[kind] = now;
-          this.sound.play(e.building ? 'terran/advisor/tadupd00.wav' : 'terran/advisor/tadupd01.wav');
+          this.sound.play(ADVISOR[kind][this.race]);
           this.pings.push({ x: e.x, y: e.y, t: now, color: '#fc1010' });
           break;
         }
@@ -349,6 +359,20 @@ export class Game {
     }
 
     if (place) {
+      // Placing a Protoss building shows where your pylons give power.
+      if (this.engine.unitType(this.mode.type).psi) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(64,112,252,0.14)';
+        ctx.strokeStyle = 'rgba(120,160,252,0.7)';
+        ctx.setLineDash([3, 3]);
+        for (const p of this.engine.units(this.me, UnitTypes.Protoss_Pylon)) {
+          ctx.beginPath();
+          ctx.ellipse(sx(p.x), sy(p.y), 256, 160, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
       for (let j = 0; j < place.th; j++) {
         for (let i = 0; i < place.tw; i++) {
           const good = place.tiles[j * place.tw + i];
@@ -442,7 +466,7 @@ export class Game {
 
   // A line in the message area: a MESSAGES key (original text and advisor voice) or plain text.
   notice(what) {
-    const m = MESSAGES[what];
+    const m = message(what, this.race);
     const text = m ? m.text ?? this.ui.meta.strings[m.str] : what;
     if (m?.voice) this.sound.play(m.voice, 100, 0, true);
     this.messages.push({ text, t: performance.now() });
@@ -486,12 +510,18 @@ export class Game {
     } else if (m.kind === 'build') {
       const t = this.engine.unitType(m.type);
       const tx = Math.round((world.x - t.w / 2) / 32), ty = Math.round((world.y - t.h / 2) / 32);
-      if (!this.engine.canPlace(m.type, tx, ty)) { this.notice('location'); this.mode = m; return; }
+      if (!this.engine.canPlace(m.type, tx, ty)) {
+        // Protoss buildings need a pylon's power, Zerg ones the creep.
+        const center = { x: tx * 32 + t.w / 2, y: ty * 32 + t.h / 2 };
+        this.notice(t.psi && !this.engine.poweredAt(center.x, center.y) ? 'power' : t.creep && m.button !== 'exit' ? 'creep' : 'location');
+        this.mode = m;
+        return;
+      }
       const why = this.needResources(m.type);
       if (why) { this.notice(why); return; }
       this.send(this.engine.cmd.build(m.type, tx, ty));
       this.menu = null;
-      this.sound.play('misc/tbldgplc.wav');
+      this.sound.play(PLACE_SOUND[t.race] ?? PLACE_SOUND[1]);
       this.acknowledge();
     }
   }

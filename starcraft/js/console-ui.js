@@ -210,6 +210,9 @@ export class ConsoleUI {
     }
     const ratio = u.maxHp ? u.hp / u.maxHp : 1;
     const hpColor = ratio > 0.66 ? COLOR.green : ratio > 0.33 ? COLOR.yellow : COLOR.red;
+    // Protoss: shields above the hit points.
+    const shields = u.maxShields > 0;
+    if (shields) this.text(ctx, `${u.shields}/${u.maxShields}`, STATUS.x + 40, STATUS.y + 62, COLOR.white, 'font8', 'center');
     if (u.maxHp > 0) this.text(ctx, `${u.hp}/${u.maxHp}`, STATUS.x + 40, STATUS.y + 70, hpColor, 'font8', 'center');
     this.text(ctx, name, STATUS.x + 160, STATUS.y + 6, COLOR.white, 'font10', 'center');
 
@@ -255,19 +258,23 @@ export class ConsoleUI {
       });
     } else if (u.nuke && mine) {
       this.text(ctx, u.nuke === 2 ? 'Nuke Ready' : 'Arming Nuke', STATUS.x + 160, STATUS.y + 40, COLOR.blue, 'font10', 'center');
+    } else if (u.building && mine && u.powered === 0) {
+      this.text(ctx, 'Disabled', STATUS.x + 160, STATUS.y + 24, COLOR.blue, 'font10', 'center');
     } else if (!u.building && mine) {
       this.text(ctx, `Kills: ${u.kills ?? 0}`, STATUS.x + 160, STATUS.y + 22, COLOR.blue, 'font10', 'center');
     }
     // Armor and weapon icons with the upgrade level in the corner.
     if (u.gear?.length && !(u.progress >= 0 && mine) && !u.loaded?.length && u.research < 0 && u.upgrade < 0) {
-      u.gear.forEach(([icon, , level], i) => {
+      // Carriers and reavers also show how many interceptors / scarabs they hold.
+      const gear = u.fighters >= 0 && mine ? [...u.gear, [u.type === 72 ? 73 : 85, 0, u.fighters]] : u.gear;
+      gear.forEach(([icon, , level], i) => {
         const x = STATUS.x + 82 + i * 38, y = STATUS.y + 40;
         this.frame(ctx, `cmdbtns-${this.race}`, 13, x, y);
         s.drawIcon(ctx, icon, x + 2, y + 2, 0, 32, 30);
         if (level) this.text(ctx, String(level), x + 27, y + 21, COLOR.white, 'font8');
       });
     }
-    if (u.energy >= 0 && u.maxEnergy > 0 && u.completed) this.text(ctx, `${u.energy}/${u.maxEnergy}`, STATUS.x + 40, STATUS.y + 80, COLOR.blue, 'font8', 'center');
+    if (u.energy >= 0 && u.maxEnergy > 0 && u.completed) this.text(ctx, `${u.energy}/${u.maxEnergy}`, STATUS.x + 40, STATUS.y + 78, COLOR.blue, 'font8', 'center');
   }
 
   passengerAt(x, y) {
